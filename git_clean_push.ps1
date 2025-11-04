@@ -60,7 +60,7 @@ try {
 }
 
 try {
-    Start-Process "https://render.com/dashboard/srv-d45039f5r7bs73b8ano0"
+    Start-Process "https://dashboard.render.com/web/srv-d45039f5r7bs73b8ano0"
     Write-Host "Painel do Render aberto no navegador padrão." -ForegroundColor Cyan
 } catch {
     Write-Host "Não foi possível abrir o navegador automaticamente." -ForegroundColor Yellow
