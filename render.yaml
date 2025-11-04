@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: millemultiplayer
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: flet run main.py --port $PORT --web
+    plan: free
+    autoDeploy: true
