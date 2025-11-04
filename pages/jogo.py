@@ -145,7 +145,7 @@ def jogo_view(page: ft.Page):
                         ft.Image(
                             ref=traffic_light_player,
                             src="images/red_light.png",
-                            width=30
+                            width=22
                         )
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -386,7 +386,7 @@ def jogo_view(page: ft.Page):
                             content=ft.Image(
                                 ref=traffic_light_oponente,
                                 src="images/red_light.png",
-                                width=30
+                                width=22
                             ),
                             alignment=ft.alignment.center_right,
                             expand=1
