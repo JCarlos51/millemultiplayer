@@ -1,4 +1,4 @@
-# main
+# main.py
 
 import flet as ft
 import os
@@ -7,7 +7,11 @@ from pages.jogo import jogo_view
 from pages.ajuda import ajuda_view
 from pages.placar import placar_view
 
+
 def main(page: ft.Page):
+    page.title = "MilleBornes Multiplayer"
+    page.favicon = "/assets/favicon.png"
+
     def route_change(e):
         page.views.clear()
         if page.route == "/":
@@ -30,13 +34,24 @@ def main(page: ft.Page):
     page.go(page.route or "/")
 
 
-# Roda como servidor web no Render
-ft.app(
-    target=main,
-    view=None,
-    port=int(os.environ.get("PORT", 8000)),
-    assets_dir="assets",
-    route_url_strategy="path"
-)
+# -------------------------------------------------------
+# Execução automática conforme ambiente (Render x local)
+# -------------------------------------------------------
 
-# ft.app(target=main, assets_dir="assets", route_url_strategy="path", view=ft.WEB_BROWSER)
+if os.environ.get("RENDER") or os.environ.get("PORT"):
+    # Modo Render (deploy online)
+    ft.app(
+        target=main,
+        view=None,
+        port=int(os.environ.get("PORT", 8000)),
+        assets_dir="assets",
+        route_url_strategy="path",
+    )
+else:
+    # Modo local (abre no navegador automaticamente)
+    ft.app(
+        target=main,
+        view=ft.WEB_BROWSER,
+        assets_dir="assets",
+        route_url_strategy="path",
+    )
