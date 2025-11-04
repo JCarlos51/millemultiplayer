@@ -36,7 +36,6 @@ def main(page: ft.Page):
 # -------------------------------------------------------
 # Execução automática conforme ambiente (Render x local)
 # -------------------------------------------------------
-
 if os.environ.get("RENDER") or os.environ.get("PORT"):
     # Modo Render (deploy online)
     ft.app(
