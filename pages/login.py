@@ -3,14 +3,26 @@ import unicodedata
 import uuid
 import math
 from datetime import datetime, timezone, timedelta
+import os
+import json
 from firebase_admin import credentials, firestore, initialize_app, _apps
 
-# 🔥 Inicializa Firebase apenas uma vez
-cred = credentials.Certificate("serviceAccountKey.json")
+# 🔥 Inicializa o Firebase apenas uma vez
 if not _apps:
-    initialize_app(cred)
-db = firestore.client()
+    firebase_key_json = os.getenv("FIREBASE_KEY")
 
+    if firebase_key_json:
+        # Se a variável de ambiente FIREBASE_KEY existir (Render)
+        cred_info = json.loads(firebase_key_json)
+        cred = credentials.Certificate(cred_info)
+    else:
+        # Caso contrário, usa o arquivo local (para rodar no seu PC)
+        cred = credentials.Certificate("serviceAccountKey.json")
+
+    initialize_app(cred)
+
+# Cria o cliente Firestore
+db = firestore.client()
 
 def normalizar_nome(nome: str) -> str:
     """Remove acentos e normaliza o nome para comparação segura."""
