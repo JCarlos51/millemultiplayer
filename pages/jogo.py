@@ -1023,7 +1023,30 @@ def jogo_view(page: ft.Page):
                 pass
                 # print(f"⚠️ Erro ao atualizar página: {e}")
 
-    sala_ref.on_snapshot(on_snapshot)
+    # 🔒 Listener thread-safe — garante atualização na thread principal da UI
+    def snapshot_listener_threadsafe(docs, changes, read_time):
+        page.invoke_later(lambda: on_snapshot(docs, changes, read_time))
+
+    # Remove listener antigo (se existir)
+    if hasattr(page, "unsubscribe_listener") and page.unsubscribe_listener:
+        page.unsubscribe_listener()
+
+    # Registra o listener novo
+    page.unsubscribe_listener = sala_ref.on_snapshot(snapshot_listener_threadsafe)
+
+    # 💤 Mantém conexão ativa no Safari/iPhone
+    def manter_conexao(page):
+        import time
+        while True:
+            time.sleep(15)
+            try:
+                page.invoke_later(lambda: None)
+            except:
+                break
+
+    import threading
+    threading.Thread(target=manter_conexao, args=(page,), daemon=True).start()
+
     snapshot = sala_ref.get()
     inicializar_sala(snapshot=snapshot)
 
