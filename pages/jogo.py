@@ -1,18 +1,33 @@
 # jogo
 
+import os
+import json
 import flet as ft
-import asyncio
-from firebase_helpers import (jogar_carta, descartar_carta, corrigir_mao_jogador, distribuir_cartas,
-                              obter_nome_jogador, obter_sala_jogador)
+from firebase_helpers import (
+    jogar_carta, descartar_carta, corrigir_mao_jogador, distribuir_cartas,
+    obter_nome_jogador, obter_sala_jogador
+)
 from firebase_admin import credentials, firestore, initialize_app, _apps
 from uuid import uuid4
 from deck import create_deck
 import threading, time
 
-cred = credentials.Certificate("serviceAccountKey.json")
+# 🔥 Inicializa Firebase apenas uma vez
 if not _apps:
+    firebase_key_json = os.getenv("FIREBASE_KEY")
+
+    if firebase_key_json:
+        # No Render: lê a chave da variável de ambiente
+        cred_info = json.loads(firebase_key_json)
+        cred = credentials.Certificate(cred_info)
+    else:
+        # Localmente: usa o arquivo físico
+        cred = credentials.Certificate("serviceAccountKey.json")
+
     initialize_app(cred)
+
 db = firestore.client()
+
 
 COLLECTION = "salas"
 
