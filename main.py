@@ -1,6 +1,7 @@
 # main
 
 import flet as ft
+import os
 from pages.login import login_view
 from pages.jogo import jogo_view
 from pages.ajuda import ajuda_view
@@ -28,4 +29,14 @@ def main(page: ft.Page):
     page.on_route_change = route_change
     page.go(page.route or "/")
 
-ft.app(target=main, assets_dir="assets", route_url_strategy="path", view=ft.WEB_BROWSER)
+
+# Roda como servidor web no Render
+ft.app(
+    target=main,
+    view=None,
+    port=int(os.environ.get("PORT", 8000)),
+    assets_dir="assets",
+    route_url_strategy="path"
+)
+
+# ft.app(target=main, assets_dir="assets", route_url_strategy="path", view=ft.WEB_BROWSER)
