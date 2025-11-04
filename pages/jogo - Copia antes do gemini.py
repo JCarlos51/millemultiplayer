@@ -35,7 +35,6 @@ def jogo_view(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 20
     page.window.center()
-    is_mobile = page.width <= 600  # detecta telas pequenas (ex: celulares)
 
     # 🔐 Persistência do ID do jogador (não gerar novo ID a cada partida)
     if not page.client_storage.contains_key("jogador_id"):
@@ -1031,15 +1030,15 @@ def jogo_view(page: ft.Page):
         route="/jogo",
         controls=[
             confirm_dialog,
-            dialog_extensao,
+            dialog_extensao,  # Dialog_extensao now defined once and added here.
             ft.Column(
                 spacing=10,
                 controls=[
-                    *([] if is_mobile else [navbar]),  # oculta navbar no celular
+                    navbar,
                     middle_area,
                     ft.Divider(),
                     ft.Text(f"🃏 Sala: {sala_jogador}", size=22, weight=ft.FontWeight.BOLD),
-                    *([] if is_mobile else [footer])  # oculta footer no celular
+                    footer
                 ],
                 scroll=ft.ScrollMode.ADAPTIVE,
                 expand=True,
