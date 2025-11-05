@@ -7,6 +7,7 @@ from uuid import uuid4
 from deck import create_deck
 import threading, time
 import asyncio
+import threading
 from firebase_helpers import (
     jogar_carta, descartar_carta, corrigir_mao_jogador, distribuir_cartas,
     obter_nome_jogador, obter_sala_jogador
@@ -149,7 +150,7 @@ def jogo_view(page: ft.Page):
                         ft.Image(
                             ref=traffic_light_player,
                             src="images/red_light.png",
-                            width=30
+                            width=25
                         )
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -390,7 +391,7 @@ def jogo_view(page: ft.Page):
                             content=ft.Image(
                                 ref=traffic_light_oponente,
                                 src="images/red_light.png",
-                                width=30
+                                width=25
                             ),
                             alignment=ft.alignment.center_right,
                             expand=1
@@ -1019,20 +1020,22 @@ def jogo_view(page: ft.Page):
 
             # 🧮 Finaliza jogo e abre placar
             if data.get("game_status") == "finished" and not estado_jogo.get("ja_exibiu_placar", False):
-                calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+                # ⚙️ Só o Player 1 calcula o placar
+                if estado_jogo["eh_player1"]:
+                    calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+
                 estado_jogo["ja_exibiu_placar"] = True
 
-                import threading
+                # 👇 Ambos redirecionam para a tela de placar
                 def delayed_redirect():
                     import time
                     time.sleep(1.5)
                     try:
                         page.go("/placar")
-                        # print("➡️ Redirecionado para /placar.")
-                    except Exception as e:
+                    except Exception:
                         pass
-                        # print(f"⚠️ Erro no redirecionamento para placar: {e}")
 
+                import threading
                 threading.Thread(target=delayed_redirect).start()
 
             # 🔄 Atualiza página de forma segura
