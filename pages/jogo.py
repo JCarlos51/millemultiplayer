@@ -35,7 +35,6 @@ def jogo_view(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 20
     page.window.center()
-    is_mobile = page.width <= 600  # detecta telas pequenas (ex: celulares)
 
     # 🔐 Persistência do ID do jogador (não gerar novo ID a cada partida)
     if not page.client_storage.contains_key("jogador_id"):
@@ -145,7 +144,7 @@ def jogo_view(page: ft.Page):
                         ft.Image(
                             ref=traffic_light_player,
                             src="images/red_light.png",
-                            width=22
+                            width=30
                         )
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -386,7 +385,7 @@ def jogo_view(page: ft.Page):
                             content=ft.Image(
                                 ref=traffic_light_oponente,
                                 src="images/red_light.png",
-                                width=22
+                                width=30
                             ),
                             alignment=ft.alignment.center_right,
                             expand=1
@@ -1023,30 +1022,7 @@ def jogo_view(page: ft.Page):
                 pass
                 # print(f"⚠️ Erro ao atualizar página: {e}")
 
-    # 🔒 Listener thread-safe — garante atualização na thread principal da UI
-    def snapshot_listener_threadsafe(docs, changes, read_time):
-        page.invoke_later(lambda: on_snapshot(docs, changes, read_time))
-
-    # Remove listener antigo (se existir)
-    if hasattr(page, "unsubscribe_listener") and page.unsubscribe_listener:
-        page.unsubscribe_listener()
-
-    # Registra o listener novo
-    page.unsubscribe_listener = sala_ref.on_snapshot(snapshot_listener_threadsafe)
-
-    # 💤 Mantém conexão ativa no Safari/iPhone
-    def manter_conexao(page):
-        import time
-        while True:
-            time.sleep(15)
-            try:
-                page.invoke_later(lambda: None)
-            except:
-                break
-
-    import threading
-    threading.Thread(target=manter_conexao, args=(page,), daemon=True).start()
-
+    sala_ref.on_snapshot(on_snapshot)
     snapshot = sala_ref.get()
     inicializar_sala(snapshot=snapshot)
 
@@ -1054,15 +1030,15 @@ def jogo_view(page: ft.Page):
         route="/jogo",
         controls=[
             confirm_dialog,
-            dialog_extensao,
+            dialog_extensao,  # Dialog_extensao now defined once and added here.
             ft.Column(
                 spacing=10,
                 controls=[
-                    *([] if is_mobile else [navbar]),  # oculta navbar no celular
+                    navbar,
                     middle_area,
                     ft.Divider(),
                     ft.Text(f"🃏 Sala: {sala_jogador}", size=22, weight=ft.FontWeight.BOLD),
-                    *([] if is_mobile else [footer])  # oculta footer no celular
+                    footer
                 ],
                 scroll=ft.ScrollMode.ADAPTIVE,
                 expand=True,

@@ -7,11 +7,7 @@ from pages.jogo import jogo_view
 from pages.ajuda import ajuda_view
 from pages.placar import placar_view
 
-
 def main(page: ft.Page):
-    page.title = "MilleBornes Multiplayer"
-    page.favicon = "/assets/favicon.png"
-
     def route_change(e):
         page.views.clear()
         if page.route == "/":
