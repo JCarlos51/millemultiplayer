@@ -3,14 +3,15 @@
 import os
 import json
 import flet as ft
+from uuid import uuid4
+from deck import create_deck
+import threading, time
+import asyncio
 from firebase_helpers import (
     jogar_carta, descartar_carta, corrigir_mao_jogador, distribuir_cartas,
     obter_nome_jogador, obter_sala_jogador
 )
 from firebase_admin import credentials, firestore, initialize_app, _apps
-from uuid import uuid4
-from deck import create_deck
-import threading, time
 
 # 🔥 Inicializa Firebase apenas uma vez
 if not _apps:
@@ -100,10 +101,14 @@ def jogo_view(page: ft.Page):
     traffic_light_oponente = ft.Ref[ft.Image]()
     hand_column_oponente = ft.Ref[ft.Column]()
     nome_oponente_barra = ft.Ref[ft.Text]()
+    # 🆕 Refs para os containers do navbar e footer (para responsividade)
+    navbar_container_ref = ft.Ref[ft.Container]()
+    footer_container_ref = ft.Ref[ft.Container]()
 
     # COMPONENTES VISUAIS
 
     navbar = ft.Container(
+        ref=navbar_container_ref,
         content=ft.ResponsiveRow(
             controls=[
                 ft.Column(col={"xs": 3, "sm": 2, "md": 1}, controls=[ft.Image(src="icons/JC.png", width=50)]),
@@ -499,6 +504,7 @@ def jogo_view(page: ft.Page):
 
     # Footer
     footer = ft.Container(
+        ref=footer_container_ref,
         content=ft.ResponsiveRow(
             controls=[
                 ft.Column(col={"xs": 12}, controls=[
@@ -559,6 +565,20 @@ def jogo_view(page: ft.Page):
         page.dialog = None
         page.snack_bar = ft.SnackBar(ft.Text(f"🗑️ Carta descartada: {carta['value']} ({carta['type']})"))
         page.snack_bar.open = True
+        page.update()
+
+    # Função para manipular o redimensionamento da página
+    def _handle_resize(e):
+        # Define a largura de um dispositivo móvel como < 768 pixels
+        is_mobile_width = page.width < 768
+
+        if navbar_container_ref.current:
+            # Oculta a navbar em dispositivos móveis
+            navbar_container_ref.current.visible = not is_mobile_width
+        if footer_container_ref.current:
+            # Oculta o footer em dispositivos móveis
+            footer_container_ref.current.visible = not is_mobile_width
+
         page.update()
 
     def atualizar_barras(distancia_jogador, distancia_computador):
@@ -1026,7 +1046,8 @@ def jogo_view(page: ft.Page):
     snapshot = sala_ref.get()
     inicializar_sala(snapshot=snapshot)
 
-    return ft.View(
+    # 1. Cria e armazena o objeto View
+    view = ft.View(
         route="/jogo",
         controls=[
             confirm_dialog,
@@ -1046,7 +1067,10 @@ def jogo_view(page: ft.Page):
             )
         ]
     )
-
+    # 2. Anexa o manipulador de redimensionamento
+    view.on_resize = _handle_resize
+    # 3. Retorna a view configurada
+    return view
 
 def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
     snapshot = sala_ref.get()
@@ -1212,9 +1236,6 @@ def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
 # ===========================================================
 # 🔧 Utilitários para abrir e fechar diálogos com segurança
 # ===========================================================
-import asyncio
-import flet as ft
-
 async def abrir_dialogo_com_segurança(page, novo_dialogo: ft.AlertDialog):
     if getattr(page, "dialog", None):
         try:

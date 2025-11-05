@@ -235,10 +235,15 @@ def jogar_carta(sala_ref, estado_jogo, carta):
         safety_responses = meu.get("safety_responses", 0)
 
         if valor == "Caminho Livre":
-            if meu.get("limite") or meu.get("status") == "Luz Vermelha":
+            #if meu.get("limite") or meu.get("status") == "Luz Vermelha":
+                #updates[f"{caminho}.limite"] = False
+                #updates[f"{caminho}.status"] = "Luz Verde"
+                #safety_responses += 1
+            if meu.get("limite"):
                 updates[f"{caminho}.limite"] = False
+            if meu.get("status") == "Luz Vermelha":
                 updates[f"{caminho}.status"] = "Luz Verde"
-                safety_responses += 1
+            safety_responses += 1
         elif valor == "Bom Motorista":
             if meu.get("status") == "Acidente":
                 updates[f"{caminho}.status"] = "Luz Verde"
