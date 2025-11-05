@@ -762,10 +762,11 @@ def jogo_view(page: ft.Page):
                 return
 
             # 🔓 Desbloqueia automaticamente após exibir o placar
-            if data.get("game_status") == "finished" and estado_jogo.get("ja_exibiu_placar", False):
-                if estado_jogo.get("bloquear_atualizacoes", False):
-                    estado_jogo["bloquear_atualizacoes"] = False
-                    # print("🔓 Bloqueio removido automaticamente após exibição do placar.")
+            if data.get("game_status") == "finished" and not estado_jogo.get("ja_exibiu_placar", False):
+                # ⚙️ Evita placar duplicado — só o player1 calcula
+                if estado_jogo["eh_player1"]:
+                    calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+                estado_jogo["ja_exibiu_placar"] = True
 
             # 🧩 Ignora se o bloqueio estiver ativo (ex: recusar extensão)
             if estado_jogo.get("bloquear_atualizacoes", False):
@@ -1080,6 +1081,9 @@ def jogo_view(page: ft.Page):
 def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
     snapshot = sala_ref.get()
     sala_data = snapshot.to_dict()
+    # ✅ Evita cálculo duplicado global
+    if sala_data.get("placar_calculado"):
+        return
 
     meu_caminho = estado_jogo["meu_caminho"]
     oponente_caminho = "player2" if meu_caminho == "player1" else "player1"

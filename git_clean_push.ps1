@@ -27,7 +27,7 @@ if ($tracked) {
 
 # 4️⃣ Limpa histórico da chave
 Write-Host ""
-Write-Host "Limpando histórico antigo de serviceAccountKey.json..." -ForegroundColor Cyan
+Write-Host "Limpando historico antigo de serviceAccountKey.json..." -ForegroundColor Cyan
 git filter-repo --path serviceAccountKey.json --invert-paths --force
 
 # 5️⃣ Verifica remote
@@ -46,12 +46,12 @@ if ($confirm -ne 's' -and $confirm -ne 'S') {
 
 # 7️⃣ Push forçado
 Write-Host ""
-Write-Host "Enviando alterações para GitHub..." -ForegroundColor Cyan
+Write-Host "Enviando alteracoes para GitHub..." -ForegroundColor Cyan
 git push origin main --force
 
 # 8️⃣ Notificação sonora e visual
 Write-Host ""
-Write-Host "Push concluído com sucesso! O Render será atualizado automaticamente." -ForegroundColor Green
+Write-Host "Push concluído com sucesso! O Render sera atualizado automaticamente." -ForegroundColor Green
 
 try {
     [System.Media.SystemSounds]::Asterisk.Play()
@@ -61,9 +61,9 @@ try {
 
 try {
     Start-Process "https://dashboard.render.com/web/srv-d45039f5r7bs73b8ano0"
-    Write-Host "Painel do Render aberto no navegador padrão." -ForegroundColor Cyan
+    Write-Host "Painel do Render aberto no navegador padrao." -ForegroundColor Cyan
 } catch {
-    Write-Host "Não foi possível abrir o navegador automaticamente." -ForegroundColor Yellow
+    Write-Host "Nao foi possível abrir o navegador automaticamente." -ForegroundColor Yellow
 }
 
 Write-Host ""
