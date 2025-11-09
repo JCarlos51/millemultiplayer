@@ -3,11 +3,12 @@
 import os
 import json
 import flet as ft
+from player_area_component import AreaDeJogoDoJogador
+from progression_area_component import AreaDeProgressoComparativo  # Importação da nova classe
 from uuid import uuid4
 from deck import create_deck
 import threading, time
 import asyncio
-import threading
 from firebase_helpers import (
     jogar_carta, descartar_carta, corrigir_mao_jogador, distribuir_cartas,
     obter_nome_jogador, obter_sala_jogador
@@ -31,6 +32,7 @@ if not _apps:
 db = firestore.client()
 
 COLLECTION = "salas"
+
 
 def jogo_view(page: ft.Page):
     page.title = "Mille Bornes Multiplayer"
@@ -83,40 +85,93 @@ def jogo_view(page: ft.Page):
     page.client_storage.set("placar_enviado", False)
     estado_jogo["ja_exibiu_dialogo_extensao"] = False
 
-    # Refs
-    distance_txt_player = ft.Ref[ft.Text]()
-    status_txt_player = ft.Ref[ft.Text]()
-    limit_txt_player = ft.Ref[ft.Text]()
-    last_card_txt_player = ft.Ref[ft.Text]()
-    safeties_txt_player = ft.Ref[ft.Text]()
-    traffic_light_player = ft.Ref[ft.Image]()
-    hand_column_player = ft.Ref[ft.Column]()
-    txt_card_player = ft.Ref[ft.TextField]()
-    timer_display = ft.Ref[ft.Text]()
+    # Refs para os componentes globais e a barra de progresso
+    nome_oponente = ft.Ref[ft.Text]()  # Nome do oponente na área principal
+    nome_oponente_barra = ft.Ref[ft.Text]()  # Ref para o nome na área da barra de progresso
 
-    distance_txt_oponente = ft.Ref[ft.Text]()
-    status_txt_oponente = ft.Ref[ft.Text]()
-    limit_txt_oponente = ft.Ref[ft.Text]()
-    last_card_txt_oponente = ft.Ref[ft.Text]()
-    safeties_txt_oponente = ft.Ref[ft.Text]()
-    traffic_light_oponente = ft.Ref[ft.Image]()
-    hand_column_oponente = ft.Ref[ft.Column]()
-    nome_oponente_barra = ft.Ref[ft.Text]()
+    # 🧩 Referências necessárias para as barras de progresso
+    barra_distancia_jogador = ft.Ref[ft.ProgressBar]()  # Controle real da barra do jogador local
+    barra_distancia_computador = ft.Ref[ft.ProgressBar]()  # Controle real da barra do oponente
+
+    # 🎨 Definição dos Controles reais (com Refs)
+    barra_jogador_control = ft.ProgressBar(
+        ref=barra_distancia_jogador,
+        value=0.0,
+        height=10,
+        color=ft.Colors.BLUE_500,
+        bgcolor=ft.Colors.GREY_300
+    )
+
+    barra_oponente_control = ft.ProgressBar(
+        ref=barra_distancia_computador,
+        value=0.0,
+        height=10,
+        color=ft.Colors.RED_500,
+        bgcolor=ft.Colors.GREY_300
+    )
+
+    # 📏 Definição da régua de graduação (usando a definição mais detalhada)
+    graduacao_régua = ft.Column(
+        alignment=ft.MainAxisAlignment.CENTER,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        controls=[
+            # Marcadores visuais
+            ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=[ft.Container(width=1, height=8, bgcolor=ft.Colors.GREY_600) for _ in range(11)],
+                expand=True
+            ),
+            # Textos abaixo da régua
+            ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=[
+                    ft.Text("0 Km", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("100", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("200", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("300", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("400", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("500", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("600", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("700", size=12, color=ft.Colors.RED),
+                    ft.Text("800", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("900", size=12, color=ft.Colors.GREY_600),
+                    ft.Text("1000", size=12, color=ft.Colors.RED),
+                ],
+                expand=True
+            )
+        ]
+    )
+
     # 🆕 Refs para os containers do navbar e footer (para responsividade)
     navbar_container_ref = ft.Ref[ft.Container]()
     footer_container_ref = ft.Ref[ft.Container]()
 
+    # NOVAS INSTÂNCIAS DE COMPONENTES
+    area_jogador_local = AreaDeJogoDoJogador(nome_jogador=nome_jogador, eh_local=True)
+    area_oponente = AreaDeJogoDoJogador(nome_jogador="Oponente", eh_local=False)
+    # O nome do oponente será atualizado dinamicamente pelo on_snapshot
+
+    # 🌟 NOVO: Instancia o componente de progresso comparativo
+    progression_bars_area = AreaDeProgressoComparativo(
+        barra_jogador=barra_jogador_control,
+        barra_oponente=barra_oponente_control,
+        graduacao_regua=graduacao_régua,
+        nome_jogador=nome_jogador,
+        nome_oponente_ref=nome_oponente_barra  # Passa a Ref para o componente gerenciar
+    )
+
     # COMPONENTES VISUAIS
 
+    # navbar com Ref e visibilidade controlada
     navbar = ft.Container(
         ref=navbar_container_ref,
         content=ft.ResponsiveRow(
             controls=[
                 ft.Column(col={"xs": 3, "sm": 2, "md": 1}, controls=[ft.Image(src="icons/JC.png", width=50)]),
                 ft.Column(col={"xs": 6, "sm": 8, "md": 10}, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                          controls=[ft.Text("Mille Bornes", size=38, font_family="Lobster", color="#180F4A",
+                          controls=[ft.Text("Mille Bornes", size=34, font_family="Lobster", color="#180F4A",
                                             text_align=ft.TextAlign.CENTER)]),
-                ft.Column(col={"xs": 3, "sm": 2, "md": 1}, controls=[ft.Image(src="images/carro.png", width=70)]),
+                ft.Column(col={"xs": 3, "sm": 2, "md": 1}, controls=[ft.Image(src="images/carro.png", width=60)]),
             ],
             alignment=ft.MainAxisAlignment.SPACE_AROUND,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -131,238 +186,13 @@ def jogo_view(page: ft.Page):
     # Área do jogador
     player_area = ft.Container(
         expand=True,
-        padding=10,
-        bgcolor="#ffffff",
-        border_radius=10,
-        border=ft.border.all(width=1, color=ft.Colors.GREY_200),
-        shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.BLACK12),
-        content=ft.Column(
-            controls=[
-                ft.Row(
-                    controls=[
-                        ft.Text(
-                            value=nome_jogador,
-                            size=22,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLUE_500
-                        ),
-                        turno_info,
-                        ft.Image(
-                            ref=traffic_light_player,
-                            src="images/red_light.png",
-                            width=25
-                        )
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER
-                ),
-
-                ft.Divider(
-                    height=1,
-                    thickness=2,
-                    color=ft.Colors.BLUE_500
-                ),
-                # LINHA 1: Distância | Situação | Limite
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Distância:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=distance_txt_player, value="0 Km", color=ft.Colors.GREY_500,
-                                                size=16, style=ft.TextStyle(weight=ft.FontWeight.W_500)),
-                                        ft.VerticalDivider(width=1, thickness=1, color=ft.Colors.GREY_400),
-                                        ft.Text("Situação:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=status_txt_player, value="Luz Vermelha", color=ft.Colors.RED,
-                                                size=16, style=ft.TextStyle(weight=ft.FontWeight.W_500)),
-                                        ft.VerticalDivider(width=1, thickness=1, color=ft.Colors.GREY_400),
-                                        ft.Text("Limite 50 km:", color="#180F4A", size=16,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=limit_txt_player, value="Inativo", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    run_spacing=5,
-                                    wrap=True,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER
-                                )
-                            ]
-                        )
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                # LINHA 2: Última carta jogada
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Última carta jogada:", color="#180F4A", size=16,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=last_card_txt_player, value="Nenhuma", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    wrap=True
-                                )
-                            ]
-                        ),
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                # LINHA 3: Segurança
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Segurança:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=safeties_txt_player, value="Nenhuma", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    wrap=True
-                                )
-                            ]
-                        ),
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                ft.Divider(
-                    height=1,
-                    thickness=1,
-                    color=ft.Colors.BLUE_500
-                ),
-                ft.Text(
-                    value="Mão do jogador:",
-                    color="#180F4A",
-                    size=18,
-                    weight=ft.FontWeight.W_500
-                ),
-                ft.Container(
-                    expand=True,
-                    content=ft.Row(  # <-- MUDANÇA: ft.Column para ft.Row para layout horizontal
-                        ref=hand_column_player,
-                        spacing=3,  # Aumenta o espaço horizontal entre as cartas
-                        wrap=True,  # Permite que as cartas quebrem para a próxima linha
-                        vertical_alignment=ft.CrossAxisAlignment.START,  # Alinha os botões verticalmente
-                    ),
-                ),
-
-            ],
-            spacing=10
-        )
+        # ... outros paddings/estilos
+        content=area_jogador_local  # Já é um UserControl, então pode ser adicionado diretamente
     )
 
     LIMITE_DISTANCIA = 1000
 
-    # Barras de progresso
-    barra_distancia_jogador = ft.ProgressBar(
-        value=0.0,
-        bgcolor=ft.Colors.GREY_200,
-        color=ft.Colors.BLUE_500,
-        height=12,
-        expand=True  # Permite a expansão da barra de progresso
-    )
-
-    barra_distancia_computador = ft.ProgressBar(
-        value=0.0,
-        bgcolor=ft.Colors.GREY_200,
-        color=ft.Colors.GREEN_400,
-        height=12,
-        expand=True  # Permite a expansão da barra de progresso
-    )
-
-    # Barras de progresso
-    barra_distancia_jogador = ft.ProgressBar(
-        value=0.0,
-        bgcolor=ft.Colors.GREY_200,
-        color=ft.Colors.BLUE_500,
-        height=12,
-        expand=True  # Permite a expansão da barra de progresso
-    )
-
-    barra_distancia_computador = ft.ProgressBar(
-        value=0.0,
-        bgcolor=ft.Colors.GREY_200,
-        color=ft.Colors.GREEN_400,
-        height=12,
-        expand=True  # Permite a expansão da barra de progresso
-    )
-
-    graduacao_régua = ft.Column(
-        alignment=ft.MainAxisAlignment.CENTER,
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,  # Center the whole ruler
-        controls=[
-            # Marcadores visuais
-            ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,  # Space out the markers
-                controls=[ft.Container(width=1, height=8, bgcolor=ft.Colors.GREY_600) for _ in range(11)],
-                expand=True  # Garante que os marcadores preencham a largura total
-            ),
-            # Textos abaixo da régua
-            ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,  # Space out the texts
-                controls=[
-                    ft.Text("0 Km", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("100", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("200", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("300", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("400", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("500", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("600", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("700", size=14, color=ft.Colors.RED),
-                    ft.Text("800", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("900", size=14, color=ft.Colors.GREY_600),
-                    ft.Text("1000", size=14, color=ft.Colors.RED),
-                ],
-                expand=True  # Garante que os textos preencham a largura total
-            )
-        ]
-    )
-
-    # Área das barras com graduação para ficar abaixo da área do computador
-    progression_bars_area = ft.Column(
-        visible=True,
-        spacing=5,
-        controls=[
-            ft.Container(height=10),  # Espaçamento
-            ft.Column(
-                controls=[
-                    ft.Text(
-                        value=nome_jogador,
-                        color="#180F4A",
-                        size=18,
-                        weight=ft.FontWeight.W_500
-                    ),
-                    barra_distancia_jogador,
-                ],
-                expand=True
-            ),
-            ft.Container(height=0),
-            ft.Column(
-                controls=[
-                    ft.Text(
-                        ref=nome_oponente_barra,
-                        value="Oponente",
-                        color="#180F4A",
-                        size=18,
-                        weight=ft.FontWeight.W_500
-                    ),
-                    barra_distancia_computador,
-                ],
-                expand=True
-            ),
-            graduacao_régua,
-            ft.Container(height=20)
-        ]
-    )
+    # O bloco de código original de `progression_bars_area = ft.Column(...)` foi substituído acima
 
     # Área do oponente
     oponente_area = ft.Container(
@@ -374,120 +204,11 @@ def jogo_view(page: ft.Page):
         shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.BLACK12),
         content=ft.Column(
             controls=[
-                ft.Row(
-                    controls=[
-                        ft.Container(
-                            content=ft.Text(
-                                ref=nome_oponente,
-                                value="Oponente",
-                                size=22,
-                                weight=ft.FontWeight.BOLD,
-                                color=ft.Colors.BLUE_500
-                            ),
-                            alignment=ft.alignment.center_left,
-                            expand=1
-                        ),
-                        ft.Container(
-                            content=ft.Image(
-                                ref=traffic_light_oponente,
-                                src="images/red_light.png",
-                                width=25
-                            ),
-                            alignment=ft.alignment.center_right,
-                            expand=1
-                        ),
-                    ]
-                ),
-                ft.Divider(
-                    height=1,
-                    thickness=2,
-                    color=ft.Colors.BLUE_500
-                ),
-                # LINHA 1: Distância | Situação | Limite (oponente)
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Distância:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=distance_txt_oponente, value="0 Km", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                        ft.VerticalDivider(width=1, thickness=1, color=ft.Colors.GREY_400),
-                                        ft.Text("Situação:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=status_txt_oponente, value="Luz Vermelha", color=ft.Colors.RED,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                        ft.VerticalDivider(width=1, thickness=1, color=ft.Colors.GREY_400),
-                                        ft.Text("Limite 50 km:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=limit_txt_oponente, value="Inativo", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    run_spacing=5,
-                                    wrap=True,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER
-                                )
-                            ]
-                        )
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                # LINHA 2: Última carta jogada (oponente)
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Última carta jogada:", color="#180F4A", size=16,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=last_card_txt_oponente, value="Nenhuma", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    wrap=True
-                                )
-                            ]
-                        ),
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                # LINHA 3: Segurança (oponente)
-                ft.ResponsiveRow(
-                    controls=[
-                        ft.Column(
-                            col={"xs": 12},
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("Segurança:", color="#180F4A", size=16, weight=ft.FontWeight.W_500),
-                                        ft.Text(ref=safeties_txt_oponente, value="Nenhuma", color=ft.Colors.GREY_500,
-                                                size=16, weight=ft.FontWeight.W_500),
-                                    ],
-                                    spacing=5,
-                                    wrap=True
-                                )
-                            ]
-                        ),
-                    ],
-                    run_spacing={"xs": 5},
-                ),
-                ft.Divider(
-                    height=1,
-                    thickness=1,
-                    color=ft.Colors.BLUE_500
-                ),
-                progression_bars_area,
-                ft.Text(
-                    ref=nome_local,
-                    size=16,
-                    weight=ft.FontWeight.W_400,
-                    color=ft.Colors.GREY_600
-                )
+                area_oponente,  # <-- O corpo principal agora é a classe
+                progression_bars_area,  # <-- Usa a NOVA CLASSE aqui
+                ft.Text(ref=nome_local, size=16, weight=ft.FontWeight.W_400, color=ft.Colors.GREY_600)
             ],
-            spacing=10
+            spacing=5
         )
     )
 
@@ -503,7 +224,7 @@ def jogo_view(page: ft.Page):
         run_spacing={"xs": 20, "sm": 20},
     )
 
-    # Footer
+    # Footer com Ref e visibilidade controlada
     footer = ft.Container(
         ref=footer_container_ref,
         content=ft.ResponsiveRow(
@@ -532,11 +253,12 @@ def jogo_view(page: ft.Page):
             alignment=ft.MainAxisAlignment.CENTER,
         ),
         bgcolor="#004C99",
-        padding=ft.padding.only(top=0, bottom=0, left=20, right=20),
+        padding=ft.padding.only(top=20, bottom=0, left=20, right=20),
         border_radius=10,
-        margin=ft.margin.only(top=0),
+        margin=ft.margin.only(top=80),
         border=ft.border.all(2, "red"),
-        height=70,
+        # height=70,
+        visible=True
     )
 
     confirm_dialog = ft.AlertDialog(
@@ -583,13 +305,15 @@ def jogo_view(page: ft.Page):
         page.update()
 
     def atualizar_barras(distancia_jogador, distancia_computador):
-        if barra_distancia_jogador.page:
-            barra_distancia_jogador.value = distancia_jogador / LIMITE_DISTANCIA
-            barra_distancia_jogador.update()
+        # As refs são usadas diretamente para atualizar as barras de progresso
+        # O .page é usado como uma checagem de segurança (controle anexado)
+        if barra_distancia_jogador.current and barra_distancia_jogador.current.page:
+            barra_distancia_jogador.current.value = distancia_jogador / LIMITE_DISTANCIA
+            barra_distancia_jogador.current.update()
 
-        if barra_distancia_computador.page:
-            barra_distancia_computador.value = distancia_computador / LIMITE_DISTANCIA
-            barra_distancia_computador.update()
+        if barra_distancia_computador.current and barra_distancia_computador.current.page:
+            barra_distancia_computador.current.value = distancia_computador / LIMITE_DISTANCIA
+            barra_distancia_computador.current.update()
 
     def inicializar_sala(snapshot=None, changes=None, read_time=None):
         sala_data = snapshot.to_dict() if snapshot else None
@@ -619,6 +343,7 @@ def jogo_view(page: ft.Page):
         # =========================
         # EXTENSÃO DE 1000KM
         # =========================
+
     def mostrar_extensao_dialogo(e=None):
         # print("🪧 Abrindo diálogo de extensão...")
         # 🔒 Garante que não há outro diálogo aberto
@@ -648,31 +373,75 @@ def jogo_view(page: ft.Page):
             page.update()
 
     def recusar_extensao(e=None):
-        sala_ref.update({
-            f"{estado_jogo['meu_caminho']}.aguardando_extensao": False,
-            f"{estado_jogo['meu_caminho']}.finalizar": True,
-            "game_status": "finished"
-        })
+        """
+        Jogador escolheu NÃO estender para 1000 km.
+        Marca a mão como finalizada e dispara o cálculo do placar.
+        """
+        try:
+            # 1) Garante que sabemos se somos player1 ou player2
+            meu_caminho = estado_jogo.get("meu_caminho")
+            if not meu_caminho:
+                # Fallback seguro: lê direto do Firestore
+                snap = sala_ref.get().to_dict() or {}
+                p1 = snap.get("player1", {})
+                p2 = snap.get("player2", {})
 
-        estado_jogo["ja_exibiu_dialogo_extensao"] = True
+                if p1.get("id") == jogador_id:
+                    meu_caminho = "player1"
+                elif p2.get("id") == jogador_id:
+                    meu_caminho = "player2"
+                else:
+                    print("⚠️ recusar_extensao: não consegui determinar o caminho do jogador.")
+                    return  # sem isso não dá pra atualizar corretamente
 
-        async def fechar_dialogo_e_redirecionar():
-            if hasattr(page, "dialog") and page.dialog:
-                page.dialog.open = False
-                page.update()
-                await asyncio.sleep(0.2)
-                page.dialog = None
-                page.update()
+                estado_jogo["meu_caminho"] = meu_caminho
 
-            page.on_keyboard_event = None
+            # 2) Atualiza o Firestore marcando fim da mão
+            updates = {
+                f"{meu_caminho}.aguardando_extensao": False,
+                f"{meu_caminho}.finalizar": True,
+                "game_status": "finished",
+            }
 
-            calcular_e_enviar_placar_final(sala_ref, estado_jogo)
-            estado_jogo["ja_exibiu_placar"] = True
+            sala_ref.update(updates)
 
-            await asyncio.sleep(1.2)
-            page.go("/placar")
+            # Evita mostrar o diálogo de novo nessa mesma mão
+            estado_jogo["ja_exibiu_dialogo_extensao"] = True
 
-        page.run_task(fechar_dialogo_e_redirecionar)
+            # 3) Fecha o diálogo e vai para o placar
+            async def fechar_dialogo_e_redirecionar():
+                # Fecha o diálogo se ainda estiver aberto
+                if hasattr(page, "dialog") and page.dialog:
+                    page.dialog.open = False
+                    page.update()
+                    await asyncio.sleep(0.2)
+                    page.dialog = None
+                    page.update()
+
+                # Remove event handler de teclado, se você estiver usando
+                page.on_keyboard_event = None
+
+                # Calcula/atualiza o placar com segurança
+                try:
+                    calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+                except Exception as exc:
+                    print(f"⚠️ Erro ao calcular placar em recusar_extensao: {exc}")
+
+                estado_jogo["ja_exibiu_placar"] = True
+
+                # Dá um pequeno tempo pro Firestore sincronizar
+                await asyncio.sleep(1.2)
+                try:
+                    page.go("/placar")
+                except Exception as exc:
+                    print(f"⚠️ Erro ao redirecionar para /placar em recusar_extensao: {exc}")
+
+            # Flet executa essa coroutine em background
+            page.run_task(fechar_dialogo_e_redirecionar)
+
+        except Exception as exc:
+            # Qualquer erro que impeça o update vai aparecer no console
+            print(f"⚠️ Erro geral em recusar_extensao: {exc}")
 
     dialog_extensao = ft.AlertDialog(
         modal=True,
@@ -762,16 +531,8 @@ def jogo_view(page: ft.Page):
             if not data:
                 return
 
-            # 🔓 Desbloqueia automaticamente após exibir o placar
-            if data.get("game_status") == "finished" and not estado_jogo.get("ja_exibiu_placar", False):
-                # ⚙️ Evita placar duplicado — só o player1 calcula
-                if estado_jogo["eh_player1"]:
-                    calcular_e_enviar_placar_final(sala_ref, estado_jogo)
-                estado_jogo["ja_exibiu_placar"] = True
-
             # 🧩 Ignora se o bloqueio estiver ativo (ex: recusar extensão)
             if estado_jogo.get("bloquear_atualizacoes", False):
-                # print("⏸️ Snapshot ignorado: bloqueio ativo (bloquear_atualizacoes=True).")
                 return
 
             jogador_1 = data.get("player1", {})
@@ -780,26 +541,42 @@ def jogo_view(page: ft.Page):
             p1_id = jogador_1.get("id")
             p2_id = jogador_2.get("id")
 
-            # Redefine caminho automaticamente
-            if not estado_jogo["meu_caminho"]:
+            # 🧭 Redefine caminho automaticamente (robusto)
+            if not estado_jogo.get("meu_caminho") or estado_jogo["meu_caminho"] not in ("player1", "player2"):
                 if jogador_id == p1_id:
                     estado_jogo["meu_caminho"] = "player1"
                 elif jogador_id == p2_id:
                     estado_jogo["meu_caminho"] = "player2"
                 else:
-                    pass
-                    # print("⚠️ jogador_id não corresponde a player1 nem player2.")
+                    estado_jogo["meu_caminho"] = None
 
-            # print("DEBUG: jogador_id local =", jogador_id)
-            # print("DEBUG: player1.id =", p1_id)
-            # print("DEBUG: player2.id =", p2_id)
+            # 🧹 RESET DE ESTADO LOCAL QUANDO UMA NOVA MÃO COMEÇA
+            if (
+                    data.get("game_status") == "started"
+                    and jogador_1.get("distance", 0) == 0
+                    and jogador_2.get("distance", 0) == 0
+                    and not jogador_1.get("aguardando_extensao", False)
+                    and not jogador_2.get("aguardando_extensao", False)
+                    and not jogador_1.get("finalizar", False)
+                    and not jogador_2.get("finalizar", False)
+            ):
+                estado_jogo["ja_exibiu_dialogo_extensao"] = False
+                estado_jogo["ja_exibiu_placar"] = False
 
-            # ✅ Auto registro se jogador não estiver presente
+                # 🧭 CORREÇÃO FINAL: reseta placar_calculado apenas em nova mão real
+                if "placar_calculado" not in data:
+                    sala_ref.update({"placar_calculado": False})
+                elif data.get("placar_calculado") is True:
+                    try:
+                        sala_ref.update({"placar_calculado": False})
+                        # print("🔄 Reset automático de placar_calculado para nova mão.")
+                    except Exception as e:
+                        # print(f"⚠️ Falha ao resetar placar_calculado: {e}")
+                        pass
+
+            # ✅ Auto-registro se jogador não estiver na sala
             if jogador_id != p1_id and jogador_id != p2_id:
-                # print("⚠️ Este jogador ainda não está na sala. Tentando se registrar...")
-
                 if not p1_id:
-                    # print("✅ Registrando jogador como player1")
                     sala_ref.update({
                         "player1": {
                             "id": jogador_id,
@@ -816,7 +593,6 @@ def jogo_view(page: ft.Page):
                         }
                     })
                 elif not p2_id:
-                    # print("✅ Registrando jogador como player2")
                     sala_ref.update({
                         "player2": {
                             "id": jogador_id,
@@ -832,27 +608,32 @@ def jogo_view(page: ft.Page):
                             "placar": {"total_geral": 0, "atual_mao": {}}
                         }
                     })
-                else:
-                    pass
-                    # print("❌ Sala cheia. Esse jogador não pode entrar.")
                 return
-
-            # print("🔥 JOGADOR_ID =", jogador_id)
 
             # ✅ Identifica o jogador
             eh_player1 = p1_id == jogador_id
             estado_jogo["eh_player1"] = eh_player1
-            estado_jogo["turno"] = data.get("turn", "")
+            turno_atual = data.get("turn", "")
+            estado_jogo["turno"] = turno_atual
             estado_jogo["meu"] = jogador_1 if eh_player1 else jogador_2
             estado_jogo["meu_caminho"] = "player1" if eh_player1 else "player2"
+
+            # 🚨 FAILSAFE DE TURNO
+            if turno_atual not in ("player1", "player2"):
+                novo_turno = "player1" if p1_id else "player2"
+                try:
+                    sala_ref.update({"turn": novo_turno})
+                    turno_atual = novo_turno
+                    estado_jogo["turno"] = novo_turno
+                except Exception:
+                    pass
 
             # ✅ Armazena no client_storage
             try:
                 page.client_storage.set("meu_caminho", estado_jogo["meu_caminho"])
                 page.client_storage.set("eh_player1", eh_player1)
-            except Exception as e:
+            except Exception:
                 pass
-                # print(f"⚠️ Erro ao salvar dados no client_storage: {e}")
 
             meu = estado_jogo["meu"]
             oponente = jogador_2 if eh_player1 else jogador_1
@@ -860,173 +641,89 @@ def jogo_view(page: ft.Page):
             # ✅ Criação automática do deck
             if "deck" not in data:
                 if p1_id and p2_id:
-                    # print("✅ Deck ausente. Distribuindo cartas.")
                     distribuir_cartas_internamente()
-                else:
-                    pass
-                    # print("⚠️ Deck ausente mas jogadores ainda não prontos.")
                 return
 
             # ✅ Verifica se precisa mostrar extensão
-            extensao_ativa = data.get("extensao_ativa", False)
-            distancia_meu = meu.get("distance", 0)
-
-            # print("🔍 VERIFICAÇÃO EXTENSÃO:")
-            # print(f"  - distancia_meu = {distancia_meu}")
-            # print(f"  - meu.aguardando_extensao = {meu.get('aguardando_extensao')}")
-            # print(f"  - meu.extensao = {meu.get('extensao')}")
-            # print(f"  - meu.finalizar = {meu.get('finalizar')}")
-            # print(f"  - extensao_ativa = {extensao_ativa}")
-
             if (
-                    distancia_meu == 700
+                    meu.get("distance", 0) == 700
                     and meu.get("aguardando_extensao", False)
                     and not estado_jogo.get("ja_exibiu_dialogo_extensao", False)
             ):
-                # print("✅ Condições para extensão atendidas. Exibindo diálogo.")
                 estado_jogo["ja_exibiu_dialogo_extensao"] = True
                 mostrar_extensao_dialogo()
 
-            # 🎨 --- Atualização de UI completa ---
-            nome_oponente.current.value = oponente.get("nome", "Oponente")
-            if nome_oponente_barra.current:
-                nome_oponente_barra.current.value = oponente.get("nome", "Oponente")
+            # 🎨 --- Atualização de UI com Componentes Refatorados ---
 
+            meu_data = jogador_1 if eh_player1 else jogador_2
+            oponente_data = jogador_2 if eh_player1 else jogador_1
             deck = data.get("deck", [])
-            nome_local.current.value = f"Qtde cartas: {len(deck)}"
 
-            turno_info.value = "✅ Sua vez!" if (
-                    (eh_player1 and data["turn"] == "player1")
-                    or (not eh_player1 and data["turn"] == "player2")
-            ) else "⏳ Aguardando o outro jogador..."
+            is_my_turn = (
+                    (eh_player1 and turno_atual == "player1") or
+                    (not eh_player1 and turno_atual == "player2")
+            )
 
-            # 🃏 Mão do jogador
-            # print(f"DEBUG: Mão do jogador no snapshot: {meu.get('hand', [])}")
-            hand_column_player.current.controls.clear()
-            is_my_turn = (eh_player1 and data["turn"] == "player1") or (not eh_player1 and data["turn"] == "player2")
+            # 1. Atualização do Nome do Oponente
+            if nome_oponente.current is not None:
+                nome_oponente.current.value = oponente_data.get("nome", "Oponente")
 
-            for carta_item in meu.get("hand", []):
-                tipo = carta_item.get("type")
-                cor = ft.Colors.BLACK
-                icone = "❓"
-                if tipo == "ataque":
-                    icone = "⚠️"
-                    cor = ft.Colors.RED
-                elif tipo == "defesa":
-                    icone = "🛡️"
-                    cor = ft.Colors.GREEN
-                elif tipo == "segurança":
-                    icone = "⭐"
-                    cor = ft.Colors.ORANGE
-                elif tipo == "distancia":
-                    icone = "🚗"
-                    cor = ft.Colors.BLUE
+            # Atualiza o nome do oponente na área da barra de progresso (agora gerenciada pelo componente)
+            progression_bars_area.atualizar_nomes(oponente_data.get("nome", "Oponente"))
 
-                hand_column_player.current.controls.append(
-                    ft.ElevatedButton(
-                        text=f"{icone} {carta_item['value']}",
-                        on_click=(lambda e, c=carta_item: tentar_jogar_carta(c)) if is_my_turn else None,
-                        opacity=1.0 if is_my_turn else 0.5,
-                        disabled=not is_my_turn,
-                        style=ft.ButtonStyle(
-                            color=cor,
-                            padding=ft.Padding(8, 4, 8, 4),
-                            shape=ft.RoundedRectangleBorder(radius=6),
-                            bgcolor=ft.Colors.WHITE,
-                            side=ft.BorderSide(2, cor)
-                        )
-                    )
-                )
+            # 2. Atualização da Contagem de Cartas no Deck
+            nome_local.current.value = f"🃏 Cartas no deck: {len(deck)}"
 
-            # print(f"DEBUG: Número de controles na mão (após populado): {len(hand_column_player.current.controls)}")
+            # 3. Atualiza a UI do **Jogador Local** (Mão, Distância, Status, etc.)
+            area_jogador_local.atualizar_ui(
+                meu_data,
+                is_my_turn,
+                len(deck),
+                tentar_jogar_carta  # Passa o callback para os botões da mão
+            )
 
-            # 🧭 UI - jogador
-            if distance_txt_player.current:
-                distance_txt_player.current.value = f'{meu.get("distance", 0)} Km'
-                distance_txt_player.current.color = ft.Colors.BLUE if meu.get("distance", 0) > 0 else ft.Colors.GREY_500
+            # 4. Atualiza a UI do **Oponente** (Distância, Status, Segurança, etc.)
+            area_oponente.atualizar_ui(
+                oponente_data
+            )
 
-            if status_txt_player.current:
-                status_txt_player.current.value = meu.get("status", "Luz Vermelha")
-                status_txt_player.current.color = ft.Colors.GREEN if meu.get("status") == "Luz Verde" else ft.Colors.RED
+            # 5. Atualiza a barra de progresso (Função auxiliar que usa as refs globais do Flet)
+            atualizar_barras(meu_data.get("distance", 0), oponente_data.get("distance", 0))
 
-            if limit_txt_player.current:
-                limite = meu.get("limite", False)
-                limit_txt_player.current.value = "Ativo" if limite else "Inativo"
-                limit_txt_player.current.color = ft.Colors.AMBER_700 if limite else ft.Colors.GREY_500
+            # 6. Atualiza o semáforo de turno (Acessando as Refs dentro dos novos componentes)
+            if is_my_turn:
+                area_jogador_local.traffic_light.current.src = "images/green_light.png"
+                area_oponente.traffic_light.current.src = "images/red_light.png"
+            else:
+                area_jogador_local.traffic_light.current.src = "images/red_light.png"
+                area_oponente.traffic_light.current.src = "images/green_light.png"
 
-            if last_card_txt_player.current:
-                ultima = meu.get("last_card_played", "Nenhuma")
-                last_card_txt_player.current.value = ultima
-                last_card_txt_player.current.color = ft.Colors.BLUE if ultima != "Nenhuma" else ft.Colors.GREY_500
+            # 7. CORREÇÃO: força finalização se alguém recusou extensão
+            try:
+                for key in ["player1", "player2"]:
+                    jogador = data.get(key, {})
+                    if jogador.get("aguardando_extensao") and not jogador.get("extensao"):
+                        # print(f"🏁 {jogador.get('nome', key)} recusou a extensão. Encerrando partida.")
+                        sala_ref.update({
+                            "game_status": "finished",
+                            f"{key}.aguardando_extensao": False,
+                            f"{key}.finalizar": True,
+                        })
+            except Exception as e:
+                # print(f"⚠️ Erro ao verificar recusa de extensão: {e}")
+                pass
 
-            if safeties_txt_player.current:
-                segs = ' | '.join(meu.get("safeties", [])) or "Nenhuma"
-                safeties_txt_player.current.value = segs
-                safeties_txt_player.current.color = ft.Colors.ORANGE if meu.get("safeties") else ft.Colors.GREY_500
-
-            if traffic_light_player.current and traffic_light_player.current.page:
-                status = meu.get("status", "")
-                limite = meu.get("limite", False)
-                if status in ["Luz Vermelha", "Sem Gasolina", "Pneu Furado", "Acidente"]:
-                    img = "images/red_light.png"
-                elif limite:
-                    img = "images/yellow_light.png"
-                else:
-                    img = "images/green_light.png"
-                traffic_light_player.current.src = img
-                traffic_light_player.current.update()
-
-            # 🧭 UI - oponente
-            if distance_txt_oponente.current:
-                distance_txt_oponente.current.value = f'{oponente.get("distance", 0)} Km'
-                distance_txt_oponente.current.color = ft.Colors.BLUE if oponente.get("distance",
-                                                                                     0) > 0 else ft.Colors.GREY_500
-
-            if status_txt_oponente.current:
-                status_txt_oponente.current.value = oponente.get("status", "Luz Vermelha")
-                status_txt_oponente.current.color = ft.Colors.GREEN if oponente.get(
-                    "status") == "Luz Verde" else ft.Colors.RED
-
-            if limit_txt_oponente.current:
-                limite_op = oponente.get("limite", False)
-                limit_txt_oponente.current.value = "Ativo" if limite_op else "Inativo"
-                limit_txt_oponente.current.color = ft.Colors.AMBER_700 if limite_op else ft.Colors.GREY_500
-
-            if last_card_txt_oponente.current:
-                ultima_op = oponente.get("last_card_played", "Nenhuma")
-                last_card_txt_oponente.current.value = ultima_op
-                last_card_txt_oponente.current.color = ft.Colors.BLUE if ultima_op != "Nenhuma" else ft.Colors.GREY_500
-
-            if safeties_txt_oponente.current:
-                segs_op = ' | '.join(oponente.get("safeties", [])) or "Nenhuma"
-                safeties_txt_oponente.current.value = segs_op
-                safeties_txt_oponente.current.color = ft.Colors.ORANGE if oponente.get(
-                    "safeties") else ft.Colors.GREY_500
-
-            if traffic_light_oponente.current and traffic_light_oponente.current.page:
-                status = oponente.get("status", "")
-                limite = oponente.get("limite", False)
-                if status in ["Luz Vermelha", "Sem Gasolina", "Pneu Furado", "Acidente"]:
-                    img = "images/red_light.png"
-                elif limite:
-                    img = "images/yellow_light.png"
-                else:
-                    img = "images/green_light.png"
-                traffic_light_oponente.current.src = img
-                traffic_light_oponente.current.update()
-
-            # 🏁 Atualiza barras de progresso
-            atualizar_barras(meu.get("distance", 0), oponente.get("distance", 0))
-
-            # 🧮 Finaliza jogo e abre placar
+            # 8. Finaliza jogo e abre placar
             if data.get("game_status") == "finished" and not estado_jogo.get("ja_exibiu_placar", False):
-                # ⚙️ Só o Player 1 calcula o placar
-                if estado_jogo["eh_player1"]:
+                snapshot_atual = sala_ref.get().to_dict()
+                if not snapshot_atual.get("placar_calculado"):
+                    import time
+                    time.sleep(0.8)
                     calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+                    sala_ref.update({"placar_calculado": True})
 
                 estado_jogo["ja_exibiu_placar"] = True
 
-                # 👇 Ambos redirecionam para a tela de placar
                 def delayed_redirect():
                     import time
                     time.sleep(1.5)
@@ -1038,13 +735,12 @@ def jogo_view(page: ft.Page):
                 import threading
                 threading.Thread(target=delayed_redirect).start()
 
-            # 🔄 Atualiza página de forma segura
+            # 9. Atualiza página de forma segura
             try:
                 if hasattr(page, "update") and callable(page.update):
                     page.update()
-            except Exception as e:
+            except Exception:
                 pass
-                # print(f"⚠️ Erro ao atualizar página: {e}")
 
     sala_ref.on_snapshot(on_snapshot)
     snapshot = sala_ref.get()
@@ -1073,20 +769,13 @@ def jogo_view(page: ft.Page):
     )
     # 2. Anexa o manipulador de redimensionamento
     view.on_resize = _handle_resize
-
-    # 3. Força a execução inicial para ajustar visibilidade no carregamento
-    _handle_resize(None)
-
-    # 4. Retorna a view configurada
+    # 3. Retorna a view configurada
     return view
 
 
 def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
     snapshot = sala_ref.get()
     sala_data = snapshot.to_dict()
-    # ✅ Evita cálculo duplicado global
-    if sala_data.get("placar_calculado"):
-        return
 
     meu_caminho = estado_jogo["meu_caminho"]
     oponente_caminho = "player2" if meu_caminho == "player1" else "player1"
@@ -1229,12 +918,16 @@ def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
 
     # 📝 Atualizar Firestore
     updates = {
+        # 👇 Jogador local
         f"{meu_caminho}.placar.atual_mao": placar_mao,
         f"{meu_caminho}.placar.total_geral": novo_total_meu,
         f"{meu_caminho}.placar_registrado": True,
         f"{meu_caminho}.placar_visto": True,  # ✅ Marca que o jogador viu o placar
+
+        # 👇 Oponente – também recebe a mão e é marcado como já registrado
         f"{oponente_caminho}.placar.atual_mao": placar_oponente,
-        f"{oponente_caminho}.placar.total_geral": novo_total_oponente
+        f"{oponente_caminho}.placar.total_geral": novo_total_oponente,
+        f"{oponente_caminho}.placar_registrado": True,
     }
 
     # 🧠 Verifica se é fim de jogo com vencedor
@@ -1244,6 +937,7 @@ def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
     sala_ref.update(updates)
 
     # print("✅ Placar da mão registrado no Firestore:", placar_mao)
+
 
 # ===========================================================
 # 🔧 Utilitários para abrir e fechar diálogos com segurança
