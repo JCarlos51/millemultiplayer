@@ -265,7 +265,7 @@ def jogar_carta(sala_ref, estado_jogo, carta):
         updates["turn"] = proximo_turno
 
     sala_ref.update(updates)
-    # time.sleep(0.5)
+    time.sleep(0.5)
     return True
 
 
