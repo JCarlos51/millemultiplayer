@@ -769,9 +769,14 @@ def jogo_view(page: ft.Page):
     )
     # 2. Anexa o manipulador de redimensionamento
     view.on_resize = _handle_resize
-    # 3. Retorna a view configurada
-    return view
 
+    # 3. CHAME O MANIPULADOR MANUALMENTE UMA VEZ para aplicar a lógica
+    # na inicialização, garantindo que a visibilidade seja ajustada
+    # antes da renderização final. Isso garante a correção visual.
+    _handle_resize(None)
+
+    # 4. Retorna a view configurada
+    return view
 
 def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
     snapshot = sala_ref.get()
