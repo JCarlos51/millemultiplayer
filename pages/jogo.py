@@ -3,8 +3,8 @@
 import os
 import json
 import flet as ft
-from player_area_component import AreaDeJogoDoJogador
-from progression_area_component import AreaDeProgressoComparativo  # Importação da nova classe
+from players_area import AreaDeJogoDoJogador
+from progression_bar import AreaDeProgressoComparativo
 from uuid import uuid4
 from deck import create_deck
 import threading, time
@@ -35,6 +35,7 @@ COLLECTION = "salas"
 
 
 def jogo_view(page: ft.Page):
+    print('Jogo View')
     page.title = "Mille Bornes Multiplayer"
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 20
@@ -44,10 +45,10 @@ def jogo_view(page: ft.Page):
     if not page.client_storage.contains_key("jogador_id"):
         novo_id = str(uuid4())
         page.client_storage.set("jogador_id", novo_id)
-        # print(f"🔥 Novo JOGADOR_ID criado = {novo_id}")
+        print(f"🔥 Novo JOGADOR_ID criado = {novo_id}")
 
     jogador_id = page.client_storage.get("jogador_id")
-    # print(f"🔥 JOGADOR_ID = {jogador_id}")
+    print(f"🔥 JOGADOR_ID = {jogador_id}")
 
     nome_jogador = obter_nome_jogador(page)
     sala_jogador = obter_sala_jogador(page)
@@ -81,6 +82,7 @@ def jogo_view(page: ft.Page):
     # ✅ Recupera quem é o jogador (player1/player2), se já foi salvo
     if page.client_storage.contains_key("meu_caminho"):
         estado_jogo["meu_caminho"] = page.client_storage.get("meu_caminho")
+        # print(f'Estado do Jogo {estado_jogo["meu_caminho"]}')
 
     page.client_storage.set("placar_enviado", False)
     estado_jogo["ja_exibiu_dialogo_extensao"] = False
@@ -106,7 +108,7 @@ def jogo_view(page: ft.Page):
         ref=barra_distancia_computador,
         value=0.0,
         height=10,
-        color=ft.Colors.RED_500,
+        color=ft.Colors.GREEN_500,
         bgcolor=ft.Colors.GREY_300
     )
 
@@ -316,6 +318,7 @@ def jogo_view(page: ft.Page):
             barra_distancia_computador.current.update()
 
     def inicializar_sala(snapshot=None, changes=None, read_time=None):
+        print("Inicializando sala")
         sala_data = snapshot.to_dict() if snapshot else None
         if not sala_data:
             sala_ref.set({
@@ -339,10 +342,6 @@ def jogo_view(page: ft.Page):
             })
         estado_jogo["ja_exibiu_dialogo_extensao"] = False
         page.update()
-
-        # =========================
-        # EXTENSÃO DE 1000KM
-        # =========================
 
     def mostrar_extensao_dialogo(e=None):
         # print("🪧 Abrindo diálogo de extensão...")
@@ -464,7 +463,7 @@ def jogo_view(page: ft.Page):
     def tentar_jogar_carta(carta):
         # Impede duplo clique enquanto a jogada anterior ainda é processada
         if bloqueio_clique["ativo"]:
-            # print("⏳ Clique ignorado — jogada anterior ainda em andamento.")
+            print("⏳ Clique ignorado — jogada anterior ainda em andamento.")
             return
 
         bloqueio_clique["ativo"] = True  # 🔒 Ativa bloqueio temporário
@@ -476,7 +475,7 @@ def jogo_view(page: ft.Page):
                 corrigir_mao_jogador(sala_ref, estado_jogo)
 
             elif sucesso == "EXTENSAO_PENDENTE":
-                # print("⏳ Extensão pendente. Aguardando decisão do jogador.")
+                print("⏳ Extensão pendente. Aguardando decisão do jogador.")
 
                 # 🛠️ Corrige a mão mesmo com extensão pendente
                 corrigir_mao_jogador(sala_ref, estado_jogo)
@@ -571,7 +570,7 @@ def jogo_view(page: ft.Page):
                         sala_ref.update({"placar_calculado": False})
                         # print("🔄 Reset automático de placar_calculado para nova mão.")
                     except Exception as e:
-                        # print(f"⚠️ Falha ao resetar placar_calculado: {e}")
+                        print(f"⚠️ Falha ao resetar placar_calculado: {e}")
                         pass
 
             # ✅ Auto-registro se jogador não estiver na sala
@@ -664,12 +663,18 @@ def jogo_view(page: ft.Page):
                     (not eh_player1 and turno_atual == "player2")
             )
 
-            # 1. Atualização do Nome do Oponente
+            # 1. Atualização do Nome do Oponente (para elementos antigos/outras áreas)
+            novo_nome_oponente = oponente_data.get("nome", "Oponente")  # Define o nome
+
             if nome_oponente.current is not None:
-                nome_oponente.current.value = oponente_data.get("nome", "Oponente")
+                nome_oponente.current.value = novo_nome_oponente
 
             # Atualiza o nome do oponente na área da barra de progresso (agora gerenciada pelo componente)
-            progression_bars_area.atualizar_nomes(oponente_data.get("nome", "Oponente"))
+            progression_bars_area.atualizar_nomes(novo_nome_oponente)
+
+            # 🎯 FIX: Atualiza o nome no componente AreaDeJogoDoJogador (o foco da correção)
+            if area_oponente.nome_jogador != novo_nome_oponente:
+                area_oponente.update_nome_jogador(novo_nome_oponente)  # <--- NOVO TRECHO
 
             # 2. Atualização da Contagem de Cartas no Deck
             nome_local.current.value = f"🃏 Cartas no deck: {len(deck)}"
@@ -710,7 +715,7 @@ def jogo_view(page: ft.Page):
                             f"{key}.finalizar": True,
                         })
             except Exception as e:
-                # print(f"⚠️ Erro ao verificar recusa de extensão: {e}")
+                print(f"⚠️ Erro ao verificar recusa de extensão: {e}")
                 pass
 
             # 8. Finaliza jogo e abre placar
@@ -794,7 +799,7 @@ def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
 
     # ✅ Evita computar placar duplicado
     if meu.get("placar_registrado", False):
-        # print("⚠️ Placar já foi registrado para este jogador. Ignorando duplicata.")
+        print("⚠️ Placar já foi registrado para este jogador. Ignorando duplicata.")
         return
 
     deck_vazio = not sala_data.get("deck")
@@ -956,7 +961,7 @@ async def abrir_dialogo_com_segurança(page, novo_dialogo: ft.AlertDialog):
             page.dialog = None
         except Exception as e:
             pass
-            # print(f"⚠️ Erro ao fechar diálogo anterior: {e}")
+            print(f"⚠️ Erro ao fechar diálogo anterior: {e}")
 
     page.dialog = novo_dialogo
     novo_dialogo.open = True
@@ -967,7 +972,7 @@ async def abrir_dialogo_com_segurança(page, novo_dialogo: ft.AlertDialog):
         # print("✅ Diálogo aberto com sucesso:", getattr(novo_dialogo.title, "value", "Sem título"))
     except Exception as e:
         pass
-        # print(f"❌ Falha ao abrir diálogo: {e}")
+        print(f"❌ Falha ao abrir diálogo: {e}")
 
 
 async def fechar_dialogo_com_segurança(page):
@@ -979,4 +984,4 @@ async def fechar_dialogo_com_segurança(page):
             page.dialog = None
         except Exception as e:
             pass
-            # print(f"⚠️ Erro ao fechar diálogo: {e}")
+            print(f"⚠️ Erro ao fechar diálogo: {e}")

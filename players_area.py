@@ -1,3 +1,5 @@
+# players_area.py
+
 import flet as ft
 
 
@@ -165,6 +167,19 @@ class AreaDeJogoDoJogador(ft.Column):
     def get_container(self):
         """Retorna o Container que envolve a coluna para ser adicionado ao layout principal."""
         return self.container
+
+    # --- NOVO MÉTODO PARA ATUALIZAR O NOME ---
+    def update_nome_jogador(self, novo_nome: str):
+        """Atualiza o nome do jogador na UI."""
+        self.nome_jogador = novo_nome
+
+        # O ft.Text com o nome é o primeiro controle no primeiro Row da coluna: self.controls[0].controls[0]
+        nome_text_control: ft.Text = self.controls[0].controls[0]
+        nome_text_control.value = novo_nome
+
+        # O self.update() força a atualização do controle (se estiver montado na página)
+        if self.page:
+            self.update()
 
     # O método atualizar_ui permanece
     def atualizar_ui(self, jogador_data: dict, is_my_turn: bool = False, deck_size: int = 0,

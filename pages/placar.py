@@ -8,7 +8,7 @@ from encerrar_view_atual import encerrar_view_atual # Assuming this is correctly
 
 
 def placar_view(page: ft.Page):
-    # print("placar_view called")
+    print("Placar View")
 # 🧼 Força a limpeza de diálogos antigos (fallback defensivo)
     if hasattr(page, "dialog"):
         page.dialog = None

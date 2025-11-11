@@ -6,23 +6,23 @@ from datetime import datetime, timezone, timedelta
 import os
 import json
 from firebase_admin import credentials, firestore, initialize_app, _apps
+from difflib import SequenceMatcher
 
 # 🔥 Inicializa o Firebase apenas uma vez
 if not _apps:
     firebase_key_json = os.getenv("FIREBASE_KEY")
 
     if firebase_key_json:
-        # Se a variável de ambiente FIREBASE_KEY existir (Render)
         cred_info = json.loads(firebase_key_json)
         cred = credentials.Certificate(cred_info)
     else:
-        # Caso contrário, usa o arquivo local (para rodar no seu PC)
         cred = credentials.Certificate("serviceAccountKey.json")
 
     initialize_app(cred)
 
 # Cria o cliente Firestore
 db = firestore.client()
+
 
 def normalizar_nome(nome: str) -> str:
     """Remove acentos e normaliza o nome para comparação segura."""
@@ -54,37 +54,9 @@ def limpar_salas_antigas():
         print(f"✅ {count} sala(s) antigas removidas.")
 
 
-def obter_primeira_sala_disponivel():
-    """
-    Sugere a primeira sala livre (000–999) apenas se não houver nenhuma aguardando o segundo jogador.
-    Igual ao comportamento do Supabase.
-    """
-    salas_ref = db.collection("salas")
-    docs = list(salas_ref.stream())
-
-    if not docs:
-        return "000"
-
-    salas_existentes = {doc.id for doc in docs}
-
-    # 🚦 Verifica se há sala aguardando (sem player2)
-    for doc in docs:
-        data = doc.to_dict() or {}
-        player2 = (data.get("player2") or {}).get("nome", "")
-        status = data.get("game_status", "")
-        if not player2 or status == "waiting":
-            # print(f"💬 Sala {doc.id} está aguardando jogador (status={status})")
-            return ""
-
-    # 🧩 Se nenhuma sala está aguardando, retorna a primeira numérica livre
-    for i in range(1000):
-        codigo = f"{i:03d}"
-        if codigo not in salas_existentes:
-            return codigo
-
-    return ""
-
-
+# ----------------------------------------------
+# 🔹 Tela de login e criação automática de sala
+# ----------------------------------------------
 def login_view(page: ft.Page):
     page.title = "Mille Bornes"
     page.fonts = {"Lobster": "/fonts/Lobster.ttf"}
@@ -92,47 +64,94 @@ def login_view(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
     page.window.center()
 
-    # 🧹 Limpa salas antigas antes de sugerir nova
     limpar_salas_antigas()
 
     # ------------------------------
-    # Funções auxiliares de UI
+    # Função principal (envio)
     # ------------------------------
-    def somente_numeros(e):
-        e.control.value = ''.join(filter(str.isdigit, e.control.value))[:3]
-        update_button_state(e)
 
-    def update_button_state(e):
-        button.disabled = (
-            len(name_player.value.strip()) == 0 or
-            len(oponente_esperado.value.strip()) == 0 or
-            len(room_number.value.strip()) != 3
-        )
-        page.update()
+    def similar(a, b):
+        """Retorna o grau de similaridade (0 a 1) entre duas strings normalizadas."""
+        return SequenceMatcher(None, a, b).ratio()
 
-    # ------------------------------
-    # Lógica principal de envio
-    # ------------------------------
     def enviar_click(e):
         nome_jogador = name_player.value.strip()
         nome_oponente = oponente_esperado.value.strip()
-        sala_id = room_number.value.strip().zfill(3)
         meu_id = str(uuid.uuid4())
 
-        if not nome_jogador or not nome_oponente or not sala_id:
+        if not nome_jogador or not nome_oponente:
             page.snack_bar = ft.SnackBar(ft.Text("Preencha todos os campos!"), open=True)
             page.update()
             return
 
-        try:
-            sala_ref = db.collection("salas").document(sala_id)
-            doc = sala_ref.get()
-            jogador_cf = normalizar_nome(nome_jogador)
-            oponente_cf = normalizar_nome(nome_oponente)
-            meu_caminho = None
+        jogador_cf = normalizar_nome(nome_jogador)
+        oponente_cf = normalizar_nome(nome_oponente)
 
-            if not doc.exists:
-                # 1️⃣ Criar nova sala (player1)
+        try:
+            # 🔍 Busca salas com status "waiting"
+            salas_query = (
+                db.collection("salas")
+                .where("game_status", "==", "waiting")
+                .stream()
+            )
+
+            sala_encontrada = None
+            melhor_similaridade = 0.0
+            sala_id_match = None
+
+            for sala in salas_query:
+                data = sala.to_dict() or {}
+                p1_nome_cf = data.get("player1_nome_cf", "")
+                oponente_esperado_cf = data.get("oponente_esperado", "")
+
+                sim_p1 = similar(p1_nome_cf, oponente_cf)
+                sim_oponente = similar(oponente_esperado_cf, jogador_cf)
+                media_sim = (sim_p1 + sim_oponente) / 2
+
+                print(f"🔍 Verificando sala {sala.id}: "
+                      f"p1_nome={p1_nome_cf}, oponente_esperado={oponente_esperado_cf}, "
+                      f"sim_p1={sim_p1:.2f}, sim_oponente={sim_oponente:.2f}, média={media_sim:.2f}")
+
+                if sim_p1 >= 0.9 and sim_oponente >= 0.9:
+                    sala_encontrada = sala
+                    melhor_similaridade = media_sim
+                    sala_id_match = sala.id
+                    print(f"✅ Sala compatível encontrada: {sala_id_match} (similaridade média {media_sim:.2f})")
+                    break
+
+            if sala_encontrada:
+                # 🎮 Jogador2 entra na sala encontrada
+                sala_id = sala_encontrada.id
+                sala_ref = db.collection("salas").document(sala_id)
+                sala_data = sala_encontrada.to_dict()
+                player1_nome = sala_data.get("player1", {}).get("nome", "")
+
+                sala_ref.update({
+                    "player2": {
+                        "id": meu_id,
+                        "nome": nome_jogador,
+                        "oponente": player1_nome,
+                        "hand": [],
+                        "distance": 0,
+                        "status": "Luz Vermelha",
+                        "limite": False,
+                        "last_card_played": "Nenhuma",
+                        "safeties": [],
+                        "com_200": "N",
+                        "placar": {"total_geral": 0, "atual_mao": {}},
+                    },
+                    "player1.oponente": nome_jogador,
+                    "game_status": "ready",
+                })
+
+                print(f"🎮 Jogador2 '{nome_jogador}' entrou na sala '{sala_id}' (encontrada automaticamente)")
+                meu_caminho = "player2"
+
+            else:
+                # 🧩 Nenhuma sala compatível → Jogador1 cria nova
+                sala_id = f"{jogador_cf}_{oponente_cf}"
+                sala_ref = db.collection("salas").document(sala_id)
+
                 sala_ref.set({
                     "player1": {
                         "id": meu_id,
@@ -162,61 +181,22 @@ def login_view(page: ft.Page):
                     },
                     "turn": "player1",
                     "game_status": "waiting",
-                    "oponente_esperado": nome_oponente.lower(),
+                    "player1_nome_cf": jogador_cf,
+                    "oponente_esperado": oponente_cf,
                     "created_at": datetime.now(timezone.utc),
                 })
+
+                print(f"🆕 Sala criada: {sala_id} aguardando '{nome_oponente}'")
                 meu_caminho = "player1"
-                # print(f"🆕 Sala criada: {sala_id} com player1 = {nome_jogador}")
 
-            else:
-                # 2️⃣ Sala já existe → entrar como player2 ou retornar como player1
-                sala_data = doc.to_dict()
-                p1_nome = normalizar_nome((sala_data.get("player1") or {}).get("nome", ""))
-                p2_nome = normalizar_nome((sala_data.get("player2") or {}).get("nome", ""))
-                esperado_bd = normalizar_nome(sala_data.get("oponente_esperado") or "")
+            # 💾 Armazena localmente e entra no jogo
+            page.client_storage.set("nome_jogador", nome_jogador)
+            page.client_storage.set("sala_jogador", sala_id)
+            page.client_storage.set("nome_oponente", nome_oponente)
+            page.client_storage.set("meu_caminho", meu_caminho)
+            page.client_storage.set("jogador_id", meu_id)
 
-                # print(f"DEBUG: jogador={jogador_cf}, oponente={oponente_cf}, p1={p1_nome}, p2={p2_nome}, esperado={esperado_bd}")
-
-                if jogador_cf == p1_nome:
-                    meu_caminho = "player1"
-
-                elif (not p2_nome and jogador_cf == esperado_bd) or (jogador_cf == p2_nome):
-                    meu_caminho = "player2"
-                    player1_nome = sala_data.get("player1", {}).get("nome", "")
-                    sala_ref.update({
-                        "player2": {
-                            "id": meu_id,
-                            "nome": nome_jogador,
-                            "oponente": player1_nome,
-                            "hand": [],
-                            "distance": 0,
-                            "status": "Luz Vermelha",
-                            "limite": False,
-                            "last_card_played": "Nenhuma",
-                            "safeties": [],
-                            "com_200": "N",
-                            "placar": {"total_geral": 0, "atual_mao": {}},
-                        },
-                        "player1.oponente": nome_jogador,
-                        "game_status": "ready"
-                    })
-                    # print(f"👤 Jogador 2 ({nome_jogador}) entrou na sala {sala_id}.")
-
-                else:
-                    msg = "Combinação inválida ou sala cheia."
-                    # print(f"⚠️ {msg}")
-                    page.snack_bar = ft.SnackBar(ft.Text(msg), open=True)
-                    page.update()
-                    return
-
-            if meu_caminho:
-                page.client_storage.set("nome_jogador", nome_jogador)
-                page.client_storage.set("sala_jogador", sala_id)
-                page.client_storage.set("nome_oponente", nome_oponente)
-                page.client_storage.set("meu_caminho", meu_caminho)
-                page.client_storage.set("jogador_id", meu_id)
-                # print(f"✅ Entrou na sala {sala_id} como {meu_caminho} ({meu_id})")
-                page.go("/jogo")
+            page.go("/jogo")
 
         except Exception as err:
             import traceback
@@ -224,16 +204,23 @@ def login_view(page: ft.Page):
             page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {err}"), open=True)
             page.update()
 
-    # ⚙️ Campos
-    sala_sugerida = obter_primeira_sala_disponivel()
+    # ------------------------------
+    # Campos da tela
+    # ------------------------------
+    def update_button_state(e):
+        button.disabled = (
+            len(name_player.value.strip()) == 0 or
+            len(oponente_esperado.value.strip()) == 0
+        )
+        page.update()
 
     name_player = ft.TextField(
-        label="Nome do jogador",
+        label="Seu nome",
         bgcolor="white",
         border_color="#d40000",
         border_radius=5,
         height=35,
-        width=160,
+        width=180,
         on_change=update_button_state
     )
 
@@ -243,33 +230,55 @@ def login_view(page: ft.Page):
         border_color="#d40000",
         border_radius=5,
         height=35,
-        width=160,
+        width=180,
         on_change=update_button_state
     )
 
-    room_number = ft.TextField(
-        label="Sala",
-        value=sala_sugerida,
-        bgcolor="white",
-        border_color="#d40000",
-        border_radius=5,
-        height=35,
-        width=80,
-        max_length=3,
-        keyboard_type=ft.KeyboardType.NUMBER,
-        on_change=somente_numeros
-    )
-
     button = ft.ElevatedButton(
-        text="Enviar",
+        text="Entrar / Criar Sala",
         disabled=True,
         on_click=enviar_click,
         style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=ft.border_radius.all(10))
+            shape=ft.RoundedRectangleBorder(radius=ft.border_radius.all(10)),
+            color={"": "white"},
+            bgcolor={"": "#d40000"},
         )
     )
 
-    # 🔹 Navbar, cabeçalho, card, footer e ícone do WhatsApp
+    login_card = ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Text("Entrar no jogo", size=18, weight=ft.FontWeight.BOLD, color="white"),
+                ft.Row(
+                    controls=[
+                        ft.Container(content=name_player, expand=True),
+                        ft.Container(content=oponente_esperado, expand=True),
+                        ft.Container(content=button),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER
+                ),
+                ft.Text(
+                    "Digite seu nome e o do seu oponente. "
+                    "Se o oponente ainda não entrou, a sala será criada automaticamente.",
+                    size=12,
+                    color="white",
+                    text_align=ft.TextAlign.CENTER
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10
+        ),
+        padding=15,
+        bgcolor="#d40000",
+        border_radius=20,
+        width=500,
+        alignment=ft.alignment.center
+    )
+
+    # ------------------------------
+    # Layout visual
+    # ------------------------------
     navbar = ft.Container(
         content=ft.ResponsiveRow(
             controls=[
@@ -300,40 +309,22 @@ def login_view(page: ft.Page):
 
     headline_col = ft.Column(
         controls=[
-            ft.Container(content=ft.Column(
-                controls=[
-                    ft.Text("J  o  g  o     d  e     c  a  r  t  a  s", size=16,
-                            weight=ft.FontWeight.W_800, color="#180F4A",
-                            text_align=ft.TextAlign.CENTER),
-                    ft.Text("Mille Bornes", size=50, weight=ft.FontWeight.BOLD,
-                            color="#180F4A", text_align=ft.TextAlign.CENTER),
-                    ft.Text(value=("O objetivo do jogo é ser o primeiro a alcançar o total de 5.000 pontos "
-                                   "em várias mãos do jogo. Para isso os jogadores tentarão completar viagens "
-                                   "de exatamente 700 KM ou 1.000 KM em cada mão jogada."),
-                            color=ft.Colors.BLACK, text_align=ft.TextAlign.CENTER),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-                width=500, alignment=ft.alignment.center),
-
+            ft.Text("J  o  g  o     d  e     c  a  r  t  a  s", size=16,
+                    weight=ft.FontWeight.W_800, color="#180F4A",
+                    text_align=ft.TextAlign.CENTER),
+            ft.Text("Mille Bornes", size=50, weight=ft.FontWeight.BOLD,
+                    color="#180F4A", text_align=ft.TextAlign.CENTER),
+            ft.Text(
+                "O objetivo do jogo é ser o primeiro a alcançar 5.000 pontos "
+                "em várias mãos, completando viagens de exatamente 700 KM ou 1.000 KM.",
+                color=ft.Colors.BLACK,
+                text_align=ft.TextAlign.CENTER
+            ),
             ft.Container(height=30),
-
-            ft.Container(content=ft.Column(
-                controls=[
-                    ft.Text("Login", size=18, weight=ft.FontWeight.BOLD),
-                    ft.Row(controls=[
-                        ft.Container(content=name_player, expand=True),
-                        ft.Container(content=oponente_esperado, expand=True),
-                        ft.Container(content=room_number, width=58),
-                        ft.Container(content=button),
-                    ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=15, bgcolor=ft.Colors.RED,
-                border_radius=20, width=500, alignment=ft.alignment.center)
+            login_card,
         ],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=20
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=20
     )
 
     img_headline = ft.Image(src="images/carro.png", width=300, height=200, fit=ft.ImageFit.CONTAIN)
@@ -341,34 +332,11 @@ def login_view(page: ft.Page):
     header = ft.ResponsiveRow(
         controls=[
             ft.Container(content=headline_col, col={"xs": 12, "md": 6}),
-            ft.Container(content=img_headline, col={"xs": 12, "md": 6},
-                         alignment=ft.alignment.center)
+            ft.Container(content=img_headline, col={"xs": 12, "md": 6}, alignment=ft.alignment.center)
         ],
         alignment=ft.MainAxisAlignment.CENTER,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         run_spacing=20
-    )
-
-    card = ft.Container(
-        content=ft.Row(controls=[
-            ft.Container(content=ft.Image(
-                src="images/manual-book.png", width=45,
-                tooltip=ft.Tooltip(
-                    message=("O baralho consiste de um jogo de 100 cartas..."),
-                    border_radius=10,
-                    text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
-                    gradient=ft.LinearGradient(begin=ft.alignment.top_left,
-                                               end=ft.alignment.Alignment(0.8, 1),
-                                               colors=["#0000FF", "#1E90FF", "#00BFFF"],
-                                               tile_mode=ft.GradientTileMode.MIRROR,
-                                               rotation=math.pi / 3),
-                )),
-                padding=8, bgcolor="white", border_radius=8,
-                border=ft.border.all(width=1, color=ft.Colors.RED),
-            )
-        ], alignment=ft.MainAxisAlignment.START),
-        margin=ft.margin.only(top=30, left=20),
-        expand=True
     )
 
     footer = ft.Container(
@@ -396,14 +364,6 @@ def login_view(page: ft.Page):
         bottom=5, right=5,
     )
 
-    def on_mount(e):
-        # 🔄 Reexecuta limpeza e sugestão de sala ao montar
-        limpar_salas_antigas()
-        room_number.value = obter_primeira_sala_disponivel()
-        page.update()
-
-    page.on_mount = on_mount
-
     return ft.View(
         route="/",
         controls=[
@@ -413,7 +373,6 @@ def login_view(page: ft.Page):
                         controls=[
                             ft.Container(content=navbar),
                             ft.Container(content=header),
-                            ft.Container(content=card),
                             ft.Container(content=footer),
                         ],
                         expand=True,
