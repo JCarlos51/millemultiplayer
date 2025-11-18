@@ -333,13 +333,16 @@ def jogo_view(page: ft.Page):
             print("⚠️ ERRO: estado_jogo['eh_player1'] não definido.")
             return
 
-        novo_turno = "player1" if not eh_player1_local else "player2"
+        meu_caminho = "player1" if eh_player1_local else "player2"
+        adversario = "player2" if eh_player1_local else "player1"
+        novo_turno = adversario
 
         try:
             sala_ref.update({
                 "extensao_ativa": True,
-                "player1.aguardando_extensao": False,
-                "player2.aguardando_extensao": False,
+                f"{meu_caminho}.extensao": True,  # ✅ Agora o jogador também marca que aceitou
+                f"{meu_caminho}.aguardando_extensao": False,
+                f"{adversario}.aguardando_extensao": False,
                 "turn": novo_turno
             })
         except Exception as ex:
