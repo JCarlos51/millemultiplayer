@@ -1,29 +1,28 @@
 import flet as ft
 import unicodedata
 import uuid
-import math
 from datetime import datetime, timezone, timedelta
 import os
 import json
 from firebase_admin import credentials, firestore, initialize_app, _apps
 from difflib import SequenceMatcher
+from google.cloud.firestore_v1 import FieldFilter, Transaction
 
-# 🔥 Inicializa o Firebase apenas uma vez
+# 🔥 Inicializa Firebase apenas uma vez
 if not _apps:
     firebase_key_json = os.getenv("FIREBASE_KEY")
-
     if firebase_key_json:
         cred_info = json.loads(firebase_key_json)
         cred = credentials.Certificate(cred_info)
     else:
         cred = credentials.Certificate("serviceAccountKey.json")
-
     initialize_app(cred)
 
-# Cria o cliente Firestore
 db = firestore.client()
 
-
+# ---------------------------------------------------
+# 🔧 Funções auxiliares
+# ---------------------------------------------------
 def normalizar_nome(nome: str) -> str:
     """Remove acentos e normaliza o nome para comparação segura."""
     if not nome:
@@ -34,29 +33,69 @@ def normalizar_nome(nome: str) -> str:
         if unicodedata.category(c) != 'Mn'
     )
 
+def similar(a, b):
+    """Retorna o grau de similaridade (0 a 1) entre duas strings."""
+    return SequenceMatcher(None, a, b).ratio()
 
 def limpar_salas_antigas():
-    """Remove salas com mais de 1 dia de existência para evitar acúmulo."""
+    """Remove salas com mais de 1 dia de existência."""
     limite = datetime.now(timezone.utc) - timedelta(days=1)
     salas_ref = db.collection("salas")
-    docs = salas_ref.stream()
-    count = 0
-
-    for doc in docs:
+    for doc in salas_ref.stream():
         data = doc.to_dict() or {}
         created_at = data.get("created_at")
         if created_at and created_at < limite:
             salas_ref.document(doc.id).delete()
-            count += 1
             print(f"🗑️ Sala {doc.id} removida (criada em {created_at})")
 
-    if count > 0:
-        print(f"✅ {count} sala(s) antigas removidas.")
+# ---------------------------------------------------
+# 🔍 Busca sala compatível (em ambas as ordens)
+# ---------------------------------------------------
+def procurar_sala_compatível(jogador_cf, oponente_cf):
+    waiting_ref = db.collection("salas").where(
+        filter=FieldFilter("game_status", "==", "waiting")
+    )
 
+    # 1️⃣ Ordem direta: player1 = oponente, esperado = jogador
+    q1 = waiting_ref.where(
+        filter=FieldFilter("player1_nome_cf", "==", oponente_cf)
+    ).where(
+        filter=FieldFilter("oponente_esperado", "==", jogador_cf)
+    ).limit(1).stream()
 
-# ----------------------------------------------
-# 🔹 Tela de login e criação automática de sala
-# ----------------------------------------------
+    sala = next(q1, None)
+    if sala:
+        print(f"✅ Sala encontrada (ordem direta): {sala.id}")
+        return sala
+
+    # 2️⃣ Ordem inversa: player1 = jogador, esperado = oponente
+    q2 = waiting_ref.where(
+        filter=FieldFilter("player1_nome_cf", "==", jogador_cf)
+    ).where(
+        filter=FieldFilter("oponente_esperado", "==", oponente_cf)
+    ).limit(1).stream()
+
+    sala = next(q2, None)
+    if sala:
+        print(f"✅ Sala encontrada (ordem inversa): {sala.id}")
+        return sala
+
+    # 3️⃣ Fallback: fuzzy match (≥ 0.9)
+    for sala in waiting_ref.stream():
+        data = sala.to_dict() or {}
+        p1_cf = data.get("player1_nome_cf", "")
+        oponente_esp_cf = data.get("oponente_esperado", "")
+        sim1 = similar(p1_cf, oponente_cf)
+        sim2 = similar(oponente_esp_cf, jogador_cf)
+        if sim1 >= 0.9 and sim2 >= 0.9:
+            print(f"✅ Sala encontrada (fuzzy): {sala.id} ({sim1:.2f}/{sim2:.2f})")
+            return sala
+
+    return None
+
+# ---------------------------------------------------
+# 🏁 Login principal
+# ---------------------------------------------------
 def login_view(page: ft.Page):
     page.title = "Mille Bornes"
     page.fonts = {"Lobster": "/fonts/Lobster.ttf"}
@@ -65,14 +104,6 @@ def login_view(page: ft.Page):
     page.window.center()
 
     limpar_salas_antigas()
-
-    # ------------------------------
-    # Função principal (envio)
-    # ------------------------------
-
-    def similar(a, b):
-        """Retorna o grau de similaridade (0 a 1) entre duas strings normalizadas."""
-        return SequenceMatcher(None, a, b).ratio()
 
     def enviar_click(e):
         nome_jogador = name_player.value.strip()
@@ -88,70 +119,51 @@ def login_view(page: ft.Page):
         oponente_cf = normalizar_nome(nome_oponente)
 
         try:
-            # 🔍 Busca salas com status "waiting"
-            salas_query = (
-                db.collection("salas")
-                .where("game_status", "==", "waiting")
-                .stream()
-            )
-
-            sala_encontrada = None
-            melhor_similaridade = 0.0
-            sala_id_match = None
-
-            for sala in salas_query:
-                data = sala.to_dict() or {}
-                p1_nome_cf = data.get("player1_nome_cf", "")
-                oponente_esperado_cf = data.get("oponente_esperado", "")
-
-                sim_p1 = similar(p1_nome_cf, oponente_cf)
-                sim_oponente = similar(oponente_esperado_cf, jogador_cf)
-                media_sim = (sim_p1 + sim_oponente) / 2
-
-                print(f"🔍 Verificando sala {sala.id}: "
-                      f"p1_nome={p1_nome_cf}, oponente_esperado={oponente_esperado_cf}, "
-                      f"sim_p1={sim_p1:.2f}, sim_oponente={sim_oponente:.2f}, média={media_sim:.2f}")
-
-                if sim_p1 >= 0.9 and sim_oponente >= 0.9:
-                    sala_encontrada = sala
-                    melhor_similaridade = media_sim
-                    sala_id_match = sala.id
-                    print(f"✅ Sala compatível encontrada: {sala_id_match} (similaridade média {media_sim:.2f})")
-                    break
+            # 🔍 Procura sala existente (ordem direta, inversa ou fuzzy)
+            sala_encontrada = procurar_sala_compatível(jogador_cf, oponente_cf)
 
             if sala_encontrada:
-                # 🎮 Jogador2 entra na sala encontrada
                 sala_id = sala_encontrada.id
                 sala_ref = db.collection("salas").document(sala_id)
-                sala_data = sala_encontrada.to_dict()
-                player1_nome = sala_data.get("player1", {}).get("nome", "")
 
-                sala_ref.update({
-                    "player2": {
-                        "id": meu_id,
-                        "nome": nome_jogador,
-                        "oponente": player1_nome,
-                        "hand": [],
-                        "distance": 0,
-                        "status": "Luz Vermelha",
-                        "limite": False,
-                        "last_card_played": "Nenhuma",
-                        "safeties": [],
-                        "com_200": "N",
-                        "placar": {"total_geral": 0, "atual_mao": {}},
-                    },
-                    "player1.oponente": nome_jogador,
-                    "game_status": "ready",
-                })
+                @firestore.transactional
+                def entrar_como_player2(transaction: Transaction, ref):
+                    snap = ref.get(transaction=transaction)
+                    data = snap.to_dict() or {}
+                    if (data.get("player2") or {}).get("id"):
+                        return False  # já existe player2
+                    player1_nome = (data.get("player1") or {}).get("nome", "")
+                    transaction.update(ref, {
+                        "player2": {
+                            "id": meu_id,
+                            "nome": nome_jogador,
+                            "oponente": player1_nome,
+                            "hand": [],
+                            "distance": 0,
+                            "status": "Luz Vermelha",
+                            "limite": False,
+                            "last_card_played": "Nenhuma",
+                            "safeties": [],
+                            "com_200": "N",
+                            "placar": {"total_geral": 0, "atual_mao": {}},
+                        },
+                        "player1.oponente": nome_jogador,
+                        "game_status": "ready",
+                        "turn": "player1"
+                    })
+                    return True
 
-                print(f"🎮 Jogador2 '{nome_jogador}' entrou na sala '{sala_id}' (encontrada automaticamente)")
+                ok = entrar_como_player2(db.transaction(), sala_ref)
                 meu_caminho = "player2"
+                if ok:
+                    print(f"🎮 Jogador2 '{nome_jogador}' entrou na sala '{sala_id}'")
+                else:
+                    print("ℹ️ Jogador2 já estava conectado; prosseguindo normalmente.")
 
             else:
-                # 🧩 Nenhuma sala compatível → Jogador1 cria nova
+                # 🧩 Nenhuma sala → Jogador1 cria nova
                 sala_id = f"{jogador_cf}_{oponente_cf}"
                 sala_ref = db.collection("salas").document(sala_id)
-
                 sala_ref.set({
                     "player1": {
                         "id": meu_id,
@@ -185,11 +197,10 @@ def login_view(page: ft.Page):
                     "oponente_esperado": oponente_cf,
                     "created_at": datetime.now(timezone.utc),
                 })
-
                 print(f"🆕 Sala criada: {sala_id} aguardando '{nome_oponente}'")
                 meu_caminho = "player1"
 
-            # 💾 Armazena localmente e entra no jogo
+            # 💾 Armazena localmente
             page.client_storage.set("nome_jogador", nome_jogador)
             page.client_storage.set("sala_jogador", sala_id)
             page.client_storage.set("nome_oponente", nome_oponente)
@@ -204,9 +215,9 @@ def login_view(page: ft.Page):
             page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {err}"), open=True)
             page.update()
 
-    # ------------------------------
-    # Campos da tela
-    # ------------------------------
+    # ---------------------------------------------------
+    # 🎨 Interface
+    # ---------------------------------------------------
     def update_button_state(e):
         button.disabled = (
             len(name_player.value.strip()) == 0 or
@@ -260,7 +271,7 @@ def login_view(page: ft.Page):
                 ),
                 ft.Text(
                     "Digite seu nome e o do seu oponente. "
-                    "Se o oponente ainda não entrou, a sala será criada automaticamente.",
+                    "A sala é criada automaticamente e o oponente entra sem número de sala.",
                     size=12,
                     color="white",
                     text_align=ft.TextAlign.CENTER
@@ -276,9 +287,6 @@ def login_view(page: ft.Page):
         alignment=ft.alignment.center
     )
 
-    # ------------------------------
-    # Layout visual
-    # ------------------------------
     navbar = ft.Container(
         content=ft.ResponsiveRow(
             controls=[
@@ -315,8 +323,7 @@ def login_view(page: ft.Page):
             ft.Text("Mille Bornes", size=50, weight=ft.FontWeight.BOLD,
                     color="#180F4A", text_align=ft.TextAlign.CENTER),
             ft.Text(
-                "O objetivo do jogo é ser o primeiro a alcançar 5.000 pontos "
-                "em várias mãos, completando viagens de exatamente 700 KM ou 1.000 KM.",
+                "O objetivo é alcançar 5.000 pontos, completando viagens de 700 km ou 1.000 km.",
                 color=ft.Colors.BLACK,
                 text_align=ft.TextAlign.CENTER
             ),
@@ -328,7 +335,6 @@ def login_view(page: ft.Page):
     )
 
     img_headline = ft.Image(src="images/carro.png", width=300, height=200, fit=ft.ImageFit.CONTAIN)
-
     header = ft.ResponsiveRow(
         controls=[
             ft.Container(content=headline_col, col={"xs": 12, "md": 6}),
@@ -340,13 +346,14 @@ def login_view(page: ft.Page):
     )
 
     footer = ft.Container(
-        content=ft.Column(controls=[
-            ft.Text("Mille Bornes", size=16, weight=ft.FontWeight.W_400,
-                    color=ft.Colors.WHITE, font_family='Lobster',
-                    text_align=ft.TextAlign.CENTER),
-            ft.Text("© Todos os direitos reservados.", color="white", size=12,
-                    text_align=ft.TextAlign.CENTER)
-        ],
+        content=ft.Column(
+            controls=[
+                ft.Text("Mille Bornes", size=16, weight=ft.FontWeight.W_400,
+                        color=ft.Colors.WHITE, font_family='Lobster',
+                        text_align=ft.TextAlign.CENTER),
+                ft.Text("© Todos os direitos reservados.", color="white", size=12,
+                        text_align=ft.TextAlign.CENTER)
+            ],
             alignment=ft.MainAxisAlignment.CENTER,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=2),

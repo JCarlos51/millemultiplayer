@@ -1,23 +1,18 @@
 import flet as ft
 from firebase_admin import firestore
 import flet_audio as fta
-from firebase_helpers import obter_nome_jogador # Assuming this is correctly imported
+from firebase_helpers import obter_nome_jogador, resetar_mao  # importar resetar_mao
 import asyncio
 from anim_manager import AnimationManager
-from encerrar_view_atual import encerrar_view_atual # Assuming this is correctly imported
+from encerrar_view_atual import encerrar_view_atual  # Assuming this is correctly imported
+from pages.jogo import create_deck, distribuir_cartas
 
 
 def placar_view(page: ft.Page):
     print("Placar View")
-# 🧼 Força a limpeza de diálogos antigos (fallback defensivo)
+    # 🧼 Força a limpeza de diálogos antigos (fallback defensivo)
     if hasattr(page, "dialog"):
         page.dialog = None
-
-    # The flag should control animation/sound, not the view creation itself.
-    # Reset this flag when a new game starts or when a new "hand" begins,
-    # so that the animation can play again if the conditions are met.
-    # For now, let's remove it from here to ensure the view always renders.
-    # page.session.set("animacao_placar_executada", True) # Remove or move this line
 
     page.scroll = ft.ScrollMode.AUTO
     page.bgcolor = ft.LinearGradient(
@@ -42,7 +37,6 @@ def placar_view(page: ft.Page):
     dados = sala_ref.get().to_dict()
 
     if not dados:
-        # print(f"⚠️ Sala {codigo_sala} não encontrada ou vazia. Redirecionando.")
         return ft.View(
             route="/placar",
             controls=[
@@ -52,7 +46,6 @@ def placar_view(page: ft.Page):
             scroll=ft.ScrollMode.AUTO
         )
 
-
     player1_id = dados.get("player1", {}).get("id")
     player2_id = dados.get("player2", {}).get("id")
 
@@ -61,10 +54,6 @@ def placar_view(page: ft.Page):
 
     meu_path = "player1" if eh_player1 else "player2"
     oponente_path = "player2" if eh_player1 else "player1"
-
-    # Re-fetch data to ensure it's fresh if needed, though 'dados' should be current.
-    # sala_ref = firestore.client().collection("salas").document(codigo_sala)
-    # dados = sala_ref.get().to_dict()
 
     jogador_venceu_ref = ft.Ref[ft.Text]()
     jogador_total_ref = ft.Ref[ft.Text]()
@@ -80,15 +69,11 @@ def placar_view(page: ft.Page):
     geral_j = meu.get("placar", {}).get("total_geral", 0)
     geral_c = oponente.get("placar", {}).get("total_geral", 0)
 
-    # print(f"DEBUG: geral_j: {geral_j}, placar_meu.total_da_mao: {placar_meu.get('total_da_mao', 0)}")
-    # print(f"DEBUG: geral_c: {geral_c}, placar_oponente.total_da_mao: {placar_oponente.get('total_da_mao', 0)}")
-
     def get_val(p, key):
         return p.get(key, 0)
 
     # ✅ Fim da partida só se alguém passou de 5000 e não for empate
     fim_de_jogo = (geral_j >= 5000 or geral_c >= 5000) and (geral_j != geral_c)
-    # print(f"DEBUG: fim_de_jogo: {fim_de_jogo}")
 
     header_style = ft.TextStyle(size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
     line_style = ft.TextStyle(size=16, color=ft.Colors.BLACK, weight=ft.FontWeight.W_500)
@@ -143,7 +128,6 @@ def placar_view(page: ft.Page):
 
     # ✅ Define se o jogador local é o vencedor
     is_local_vencedor = (geral_j > geral_c and eh_player1) or (geral_c > geral_j and not eh_player1)
-    # print(f"🏆 is_local_vencedor = {is_local_vencedor}")
 
     def celula(conteudo, fundo, bordas, col):
         return ft.Container(
@@ -195,13 +179,14 @@ def placar_view(page: ft.Page):
             spacing=0
         )
 
+    # 🔢 Lê diretamente os valores calculados no Firestore (sem recalcular lógica)
     dist_j = get_val(placar_meu, "distancia")
     seg_j = get_val(placar_meu, "segurancas")
     seg4_j = get_val(placar_meu, "todas_segurancas")
     seg_resp_j = get_val(placar_meu, "seguranca_em_resposta")
     perc_comp_j = get_val(placar_meu, "percurso_completo")
-    s200_j = 200 if dist_j == 700 and meu.get("com_200") == "N" else 300 if dist_j == 1000 and meu.get(
-        "com_200") == "N" else 0
+    # com_200 já é um bônus numérico calculado pelo backend
+    s200_j = get_val(placar_meu, "com_200")
     adv0_j = get_val(placar_meu, "oponente_zero")
     exts_j = get_val(placar_meu, "bonus_extensao")
     fim_cart_j = get_val(placar_meu, "fim_do_baralho")
@@ -212,8 +197,7 @@ def placar_view(page: ft.Page):
     seg4_c = get_val(placar_oponente, "todas_segurancas")
     seg_resp_c = get_val(placar_oponente, "seguranca_em_resposta")
     perc_comp_c = get_val(placar_oponente, "percurso_completo")
-    s200_c = 200 if dist_c == 700 and oponente.get("com_200") == "N" else 300 if dist_c == 1000 and oponente.get(
-        "com_200") == "N" else 0
+    s200_c = get_val(placar_oponente, "com_200")
     adv0_c = get_val(placar_oponente, "oponente_zero")
     exts_c = get_val(placar_oponente, "bonus_extensao")
     fim_cart_c = get_val(placar_oponente, "fim_do_baralho")
@@ -226,16 +210,24 @@ def placar_view(page: ft.Page):
         # print("limpar_dados_placar")
         updates = {}
 
-        # 🧹 Limpeza da mão atual
+        # 🧹 Limpeza da mão atual (placar da mão anterior some, mas total_geral permanece)
         updates[f"{meu_path}.placar.atual_mao"] = firestore.DELETE_FIELD
         updates[f"{oponente_path}.placar.atual_mao"] = firestore.DELETE_FIELD
         updates[f"{meu_path}.placar_registrado"] = False
         updates[f"{oponente_path}.placar_registrado"] = False
+        updates[f"{meu_path}.placar_visto"] = False
+        updates[f"{oponente_path}.placar_visto"] = False
 
+        # Se o jogo terminou (alguém chegou a 5000+), zera o total geral para um NOVO JOGO
+        if fim_de_jogo:
+            updates[f"{meu_path}.placar.total_geral"] = 0
+            updates[f"{oponente_path}.placar.total_geral"] = 0
+
+        # 🔄 Reset completo de estado de mesa para NOVA MÃO na mesma sala
         for path in [meu_path, oponente_path]:
             updates.update({
-                f"{path}.distance": 0,
-                f"{path}.status": "Luz Vermelha",
+                f"{path}.distance": 0,  # <-- VOLTA PRA 0 Km
+                f"{path}.status": "Luz Vermelha",  # <-- Recomeça parado
                 f"{path}.limite": False,
                 f"{path}.last_card_played": "Nenhuma",
                 f"{path}.safeties": [],
@@ -243,18 +235,24 @@ def placar_view(page: ft.Page):
                 f"{path}.extensao": False,
                 f"{path}.aguardando_extensao": False,
                 f"{path}.finalizar": False,
-                f"{path}.com_200": "N"
+                f"{path}.com_200": "N",
+                f"{path}.safety_responses": 0,  # <-- zera coup fourré da mão
             })
 
-        updates["deck"] = firestore.DELETE_FIELD
-        updates["game_status"] = "playing"
+        # 🔁 Primeiro remove o deck sozinho
+        sala_ref.update({"deck": firestore.DELETE_FIELD})
+
+        # 🔁 Gatilhos de nova mão
+        updates["deck"] = firestore.DELETE_FIELD  # força o jogo.py a criar novo baralho e redistribuir
+        updates["game_status"] = "started"  # <-- o jogo.py procura exatamente isso
         updates["turn"] = "player1"
+        updates["placar_calculado"] = False  # garante que a próxima mão volte a calcular normalmente
+        updates["extensao_ativa"] = False
+
         # print("atualiza firestore")
         sala_ref.update(updates)
 
-    # Define a função de callback do botão
     async def voltar_jogo(e):
-        # print("voltar_jogo")
         try:
             if fim_de_jogo:
                 # 1. Encerra som e animações antes de sair
@@ -262,24 +260,27 @@ def placar_view(page: ft.Page):
                     if isinstance(item, fta.Audio) and item.src.endswith("victory.mp3"):
                         item.pause()
                 anim_manager.stop_animation()
-                anim_manager.clear_animations() # Limpa as animações registradas
+                anim_manager.clear_animations()  # Limpa as animações registradas
 
                 # 2. Encerra a view de forma segura
                 encerrar_view_atual(page, anim_manager)
 
-                # Reset the flag here when a game *ends* and a new one is about to start
+                # Reset da flag de animação de fim de jogo
                 page.session.set("animacao_placar_executada", False)
 
-
+            # 3. Limpa dados e prepara nova mão / novo jogo
             await limpar_dados_pos_placar()
-            await asyncio.sleep(1) # Give a small delay for Firebase update to propagate
+
+            # 4. Pequeno delay extra de segurança (opcional)
+            await asyncio.sleep(0.1)
+
+            # 5. Agora sim, ir para o jogo
             page.go("/jogo")
 
-        except Exception as ex:
-            pass
-            # print("⚠️ Erro ao reiniciar jogo:", ex)
+        except Exception as err:
+            print("Erro em voltar_jogo:", err)
 
-    # Define o botão de jogar
+    # Botão de jogar (Nova mão / Novo jogo)
     botao_jogar = ft.ElevatedButton(
         text=texto_botao,
         on_click=voltar_jogo,
@@ -372,7 +373,6 @@ def placar_view(page: ft.Page):
     )
 
     def tocar_vitoria():
-        # print("tocar_vitoria")
         for item in page.overlay:
             if isinstance(item, fta.Audio) and item.src.endswith("victory.mp3"):
                 item.seek(0)
@@ -380,7 +380,6 @@ def placar_view(page: ft.Page):
                 break
 
     async def iniciar_animacao_vencedor():
-        # print("iniciar_animacao_vencedor")
         # Animação para o nome do vencedor
         if vencedor_nome_ref.current:
             anim_manager.add_animation(
@@ -419,7 +418,7 @@ def placar_view(page: ft.Page):
                 auto_reverse=True
             )
 
-        # Animação sutil para os elementos do perdedor (opcional, para contraste)
+        # Animação sutil para o perdedor
         if perdedor_nome_ref.current:
             anim_manager.add_animation(
                 perdedor_nome_ref.current,
@@ -438,53 +437,33 @@ def placar_view(page: ft.Page):
         page.update()
         anim_manager.start_animation(page)
 
-
     if fim_de_jogo:
-        # Only proceed with animation and sound if the animation hasn't been executed for THIS game end.
         if not page.session.get("animacao_placar_executada_game_end"):
-            # print("iniciar_animacoes_seguras")
-            page.session.set("animacao_placar_executada_game_end", True) # Set flag for this game end
+
+            page.session.set("animacao_placar_executada_game_end", True)
 
             async def iniciar_animacoes_seguras():
-                # print("⏳ Iniciando animações seguras...")
                 await asyncio.sleep(0.5)
 
                 def refs_prontos():
                     return (
-                            vencedor_nome_ref.current
-                            and vencedor_total_ref.current
-                            and getattr(vencedor_nome_ref.current, "_Control__page", None)
-                            and getattr(vencedor_total_ref.current, "_Control__page", None)
+                        vencedor_nome_ref.current
+                        and vencedor_total_ref.current
+                        and getattr(vencedor_nome_ref.current, "_Control__page", None)
+                        and getattr(vencedor_total_ref.current, "_Control__page", None)
                     )
 
                 max_tentativas = 80
-                for tentativa in range(max_tentativas):
+                for _ in range(max_tentativas):
                     await asyncio.sleep(0.3)
                     page.update()
 
-                    # print(f"⌛ Tentativa {tentativa + 1}/{max_tentativas}")
-                    # print("🔍 vencedor_nome_ref.current:", vencedor_nome_ref.current)
-                    # print("🔍 vencedor_total_ref.current:", vencedor_total_ref.current)
-                    if vencedor_nome_ref.current:
-                        pass
-                        # print("🧩 vencedor_nome_ref page:", getattr(vencedor_nome_ref.current, '_Control__page', None))
-                    if vencedor_total_ref.current:
-                        pass
-                        # print("🧩 vencedor_total_ref page:", getattr(vencedor_total_ref.current, '_Control__page', None))
-
                     if refs_prontos():
-                        # print("✅ Referências disponíveis. Iniciando animação.")
                         tocar_vitoria()
                         await iniciar_animacao_vencedor()
                         return
 
-                # print("⚠️ Timeout: referências nunca ficaram prontas para animação.")
-
             page.run_task(iniciar_animacoes_seguras)
-        else:
-            pass
-            # print("⚠️ Animação de fim de jogo já executada nesta sessão. Pulando.")
-
 
     view = ft.View(
         route="/placar",

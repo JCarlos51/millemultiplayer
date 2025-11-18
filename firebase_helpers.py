@@ -1,5 +1,3 @@
-# firebase_helpers.py
-
 import random
 import time
 from uuid import uuid4  # Adicionado para uso potencial em shuffle (se necessário)
@@ -80,23 +78,50 @@ def distribuir_cartas(sala_ref, deck):
 
 
 def jogar_carta(sala_ref, estado_jogo, carta):
+    """
+    Aplica a jogada de uma carta (distância / ataque / defesa / segurança)
+    e atualiza o Firestore.
+
+    Inclui:
+    - lógica de extensão em 700 km
+    - limite de 50 km
+    - verificação de seguranças
+    """
+
+    try:
+        sala_data = sala_ref.get().to_dict() or {}
+    except Exception as e:
+        print(f"❌ Erro ao acessar Firestore em jogar_carta: {e}")
+        return "erro ao acessar a sala"
+
     caminho = estado_jogo["meu_caminho"]
-    sala_data = sala_ref.get().to_dict()
     meu = sala_data.get(caminho, {})
+
+    if not meu:
+        print("⚠️ jogar_carta: dados do jogador não encontrados.")
+        return "dados do jogador não encontrados"
+
+    # cópia da mão para remoção da carta
     nova_mao = meu.get("hand", []).copy()
     for i, c in enumerate(nova_mao):
         if c == carta:
             del nova_mao[i]
             break
 
-    carta_str = carta['value']
-    turno_atual = estado_jogo["turno"]
+    carta_str = carta["value"]
+
+    # ⚠️ Usar o turno do Firestore, não só o estado local
+    turno_atual = sala_data.get("turn") or estado_jogo.get("turno")
+    if turno_atual not in ("player1", "player2"):
+        # fallback defensivo
+        turno_atual = "player1"
+
     proximo_turno = "player2" if turno_atual == "player1" else "player1"
     tipo = carta["type"]
     valor = carta["value"]
 
     # --- LÓGICA DE EXTENSÃO GLOBAL (FIX) ---
-    oponente_path = "player2" if estado_jogo["eh_player1"] else "player1"
+    oponente_path = "player2" if estado_jogo.get("eh_player1") else "player1"
     oponente = sala_data.get(oponente_path, {})
 
     meu_extensao = meu.get("extensao", False)
@@ -107,47 +132,58 @@ def jogar_carta(sala_ref, estado_jogo, carta):
 
     updates = {
         f"{caminho}.hand": nova_mao,
-        f"{caminho}.last_card_played": carta_str
+        f"{caminho}.last_card_played": carta_str,
     }
 
     pass_turn = True
 
+    # ============================================================
+    # 1) CARTAS DE DISTÂNCIA
+    # ============================================================
     if tipo == "distancia":
+        # já está aguardando extensão → não pode jogar distância
         if meu.get("aguardando_extensao", False):
-            # print("⚠️ Jogada bloqueada — aguardando extensão.")
+            print("⚠️ Jogada distância bloqueada — aguardando decisão de extensão.")
             return "você precisa escolher entre extensão ou descarte"
 
         if meu.get("status") != "Luz Verde":
-            # 📝 MOTIVO: Não está com Luz Verde
             return "você não está com 'Luz Verde'"
 
         valor_int = int(valor.split()[0])
         distancia_atual = meu.get("distance", 0)
+
+        # 2️⃣ Verificação de limite 50 km vem ANTES de somar a distância
+        if meu.get("limite", False) and valor_int > 50:
+            return "o limite de 50 km está Ativo"
+
         nova_distancia = distancia_atual + valor_int
 
-        # ✅ Marca flag de uso de 200km (somente se carta válida, não descarte)
+        print(
+            f"🧮 [DISTÂNCIA] {caminho}: {distancia_atual} + {valor_int} = {nova_distancia} "
+            f"(limite_700_removido={limite_700_removido})"
+        )
+
+        # ✅ Marca flag de uso de 200km (somente se carta válida)
         if valor_int == 200:
             updates[f"{caminho}.com_200"] = "S"
 
         # 1️⃣ Atingiu exatamente 700km — aciona extensão
         if not limite_700_removido and nova_distancia == 700:
-            # print("🧪 Atingiu exatamente 700km. Ativando aguardando_extensao.")
+            print("⏳ EXTENSAO_PENDENTE: atingiu 700 km, aguardando decisão do jogador.")
             updates[f"{caminho}.aguardando_extensao"] = True
             updates[f"{caminho}.distance"] = nova_distancia
+            # ⚠️ NÃO passa o turno aqui – o mesmo jogador decide extensão
             sala_ref.update(updates)
             return "EXTENSAO_PENDENTE"
 
-        # 2️⃣ Verificação de limite 50 km
-        if meu.get("limite", False) and valor_int > 50:
-            return "o limite de 50 km está Ativo"
-
         # 3️⃣ Bloqueio se passar de 700km sem extensão
         if not limite_700_removido and nova_distancia > 700:
-            # print("🚫 Tentativa de passar de 700km sem extensão. Jogada bloqueada.")
+            print("🚫 Tentativa de passar de 700km sem extensão.")
             return "você precisa de exatos 700 km para pedir extensão ou encerrar a partida"
 
         # 4️⃣ Bloqueio se passar de 1000km
         if nova_distancia > 1000:
+            print("🚫 Tentativa de ultrapassar 1000 km.")
             return "você precisa de exatos 1000 km para encerrar a partida"
 
         # ✅ Atualiza distância
@@ -155,14 +191,17 @@ def jogar_carta(sala_ref, estado_jogo, carta):
 
         # 🏁 Finaliza partida ao atingir 1000km
         if nova_distancia == 1000:
+            print(f"🏁 {caminho} atingiu 1000 km — finalizando partida.")
             updates[f"{caminho}.winner"] = True
             updates[f"{caminho}.finalizar"] = True
             updates["game_status"] = "finished"
 
         pass_turn = True
 
+    # ============================================================
+    # 2) CARTAS DE ATAQUE
+    # ============================================================
     elif tipo == "ataque":
-        oponente_path = "player2" if estado_jogo["eh_player1"] else "player1"
         oponente_data = sala_data.get(oponente_path, {})
 
         segurancas_que_bloqueiam = {
@@ -170,12 +209,11 @@ def jogar_carta(sala_ref, estado_jogo, carta):
             "Limite 50 km": "Caminho Livre",
             "Acidente": "Bom Motorista",
             "Pneu Furado": "Pneu de Aço",
-            "Sem Gasolina": "Tanque Extra"
+            "Sem Gasolina": "Tanque Extra",
         }
 
         nome_seguranca = segurancas_que_bloqueiam.get(valor)
         if nome_seguranca and nome_seguranca in oponente_data.get("safeties", []):
-            # 📝 MOTIVO: Oponente está protegido
             return f"o oponente está protegido pela segurança '{nome_seguranca}'"
 
         oponente_status = oponente_data.get("status", "")
@@ -183,62 +221,57 @@ def jogar_carta(sala_ref, estado_jogo, carta):
 
         if valor == "Limite 50 km":
             if oponente_limite:
-                # 📝 MOTIVO: Limite 50 km já ativo no oponente
                 return "o oponente já está com o Limite 50 km Ativo"
             updates[f"{oponente_path}.limite"] = True
         else:
             if oponente_status != "Luz Verde":
-                # 📝 MOTIVO: Oponente não está com Luz Verde (exceto Limite 50 km)
                 return "o oponente não está com 'Luz Verde'"
             updates[f"{oponente_path}.status"] = valor
 
         pass_turn = True
 
+    # ============================================================
+    # 3) CARTAS DE DEFESA
+    # ============================================================
     elif tipo == "defesa":
         status = meu.get("status", "")
         limite = meu.get("limite", False)
 
-        # Mapeamento do status atacado para a carta de defesa
         validacao_defesa = {
             "Luz Verde": "Luz Vermelha",
             "Conserto": "Acidente",
             "Estepe": "Pneu Furado",
-            "Gasolina": "Sem Gasolina"
+            "Gasolina": "Sem Gasolina",
         }
 
         if valor == "Fim de Limite":
             if not limite:
-                # 📝 MOTIVO: Limite 50 km não está ativo
                 return "você não está com o Limite 50 km Ativo"
             updates[f"{caminho}.limite"] = False
         elif valor in validacao_defesa:
             status_requerido = validacao_defesa[valor]
             if status != status_requerido:
-                # 📝 MOTIVO: Defesa errada para o status atual
                 return f"você está com '{status}' e não com '{status_requerido}'"
             updates[f"{caminho}.status"] = "Luz Verde"
         else:
-            # 📝 MOTIVO: Carta de defesa desconhecida ou erro
             return "não foi possível determinar a regra de defesa"
 
         pass_turn = True
 
+    # ============================================================
+    # 4) CARTAS DE SEGURANÇA
+    # ============================================================
     elif tipo == "segurança":
         segs = meu.get("safeties", [])
         if valor in segs:
-            # 📝 MOTIVO: Segurança já jogada
             return "você já tem essa carta de segurança em jogo"
+
         segs.append(valor)
         updates[f"{caminho}.safeties"] = segs
 
-        # 🧠 Se a segurança resolver um ataque ativo, desativa-o e conta o coup fourré
         safety_responses = meu.get("safety_responses", 0)
 
         if valor == "Caminho Livre":
-            #if meu.get("limite") or meu.get("status") == "Luz Vermelha":
-                #updates[f"{caminho}.limite"] = False
-                #updates[f"{caminho}.status"] = "Luz Verde"
-                #safety_responses += 1
             if meu.get("limite"):
                 updates[f"{caminho}.limite"] = False
             if meu.get("status") == "Luz Vermelha":
@@ -259,40 +292,49 @@ def jogar_carta(sala_ref, estado_jogo, carta):
 
         updates[f"{caminho}.safety_responses"] = safety_responses
 
-    pass_turn = True
+        pass_turn = True
 
+    # ============================================================
+    # 5) PASSAR TURNO (casos normais)
+    # ============================================================
     if pass_turn:
         updates["turn"] = proximo_turno
 
     sala_ref.update(updates)
-    # time.sleep(0.5)
     return True
 
 
 def descartar_carta(sala_ref, estado_jogo, carta):
     meu = estado_jogo["meu"]
-    nova_mao = meu.get("hand", []).copy()
-    try:
-        # Encontra a carta com base no objeto completo (incluindo 'type')
-        index_carta = nova_mao.index(carta)
-        # A carta é simplesmente removida da mão e do jogo (descarte permanente).
-        nova_mao.pop(index_carta)
+    mao_atual = meu.get("hand", []).copy()
 
-    except ValueError:
-        # print("⚠️ Carta não encontrada na mão para descarte.")
+    # 🔎 Busca segura por valor + tipo (e não pelo objeto)
+    index_carta = next(
+        (i for i, c in enumerate(mao_atual)
+         if c.get("value") == carta.get("value") and c.get("type") == carta.get("type")),
+        None
+    )
+
+    if index_carta is None:
+        print("⚠️ Carta não encontrada para descarte (valor/tipo).")
         return
+
+    # Remove corretamente
+    mao_atual.pop(index_carta)
 
     caminho = estado_jogo["meu_caminho"]
     turno_atual = estado_jogo["turno"]
     proximo_turno = "player2" if turno_atual == "player1" else "player1"
 
     updates = {
-        f"{caminho}.hand": nova_mao,
-        # O deck não é atualizado, pois cartas descartadas não voltam
+        f"{caminho}.hand": mao_atual,
         "turn": proximo_turno,
-        f"{caminho}.last_card_played": f' {carta["value"]} (descarte)'
+        f"{caminho}.last_card_played": f'{carta["value"]} (descarte)'
     }
+
     sala_ref.update(updates)
+
+    # Garante mão com 6 cartas
     corrigir_mao_jogador(sala_ref, estado_jogo)
 
 
@@ -327,11 +369,20 @@ def comprar_carta_do_deck(sala_ref, estado_jogo):
 
 
 def finalizar_placar_mao(sala_ref, sala_data, mao_vazia=False):
-    # 📝 Esta função é a lógica que calcula o placar no final de uma MÃO (partida)
+    """
+    Calcula o placar da mão CORRETAMENTE, sempre usando
+    o jogador que finalizou a mão como referência (finalizar=True).
+    """
 
-    # Assumindo que o jogo é entre player1 e player2
-    meu_caminho = "player1"
-    oponente_caminho = "player2"
+    # -----------------------------
+    # 1) Identificar quem finalizou
+    # -----------------------------
+    if sala_data["player1"].get("finalizar", False):
+        meu_caminho = "player1"
+        oponente_caminho = "player2"
+    else:
+        meu_caminho = "player2"
+        oponente_caminho = "player1"
 
     meu = sala_data.get(meu_caminho, {})
     oponente = sala_data.get(oponente_caminho, {})
@@ -339,138 +390,254 @@ def finalizar_placar_mao(sala_ref, sala_data, mao_vazia=False):
     distance = meu.get("distance", 0)
     distance_op = oponente.get("distance", 0)
 
-    # Verifica se houve vencedor por 1000km
     winner = meu.get("winner", False)
     winner_op = oponente.get("winner", False)
 
-    # 1. Bônus de extensão
-    # Obtendo o status de extensão do jogador.
+    # -----------------------------------
+    # 2) Bônus de extensão e fim de baralho
+    # -----------------------------------
     extensao = meu.get("extensao", False)
     extensao_op = oponente.get("extensao", False)
 
-    # 2. Bônus por baralho vazio
     bonus_fim_baralho = 0
-    if mao_vazia and not winner and not winner_op:
-        # O bônus é para quem tiver a menor mão no final
-        mao_count = len(meu.get("hand", []))
-        mao_count_op = len(oponente.get("hand", []))
-
-        if mao_count == 0 and mao_count_op > 0:
-            bonus_fim_baralho = 300
-        elif mao_count_op == 0 and mao_count > 0:
-            bonus_fim_baralho = 0  # O bônus vai para o oponente
-        elif mao_count == 0 and mao_count_op == 0:
-            # Se ambos zeraram a mão no final, o bônus é zero (ou para quem zerou primeiro, o que é mais complexo)
-            # Manter em zero por simplificação da regra não especificada
-            bonus_fim_baralho = 0
-        else:
-            bonus_fim_baralho = 0
-
     bonus_fim_baralho_op = 0
+
     if mao_vazia and not winner and not winner_op:
-        mao_count = len(meu.get("hand", []))
-        mao_count_op = len(oponente.get("hand", []))
 
-        if mao_count_op == 0 and mao_count > 0:
+        mao_meu = len(meu.get("hand", []))
+        mao_op = len(oponente.get("hand", []))
+
+        if mao_meu == 0 and mao_op > 0:
+            bonus_fim_baralho = 300
+        elif mao_op == 0 and mao_meu > 0:
             bonus_fim_baralho_op = 300
-        else:
-            bonus_fim_baralho_op = 0
 
-    # 3. Pontuação de Segurança
-    # Bônus de 100 pontos por cada segurança jogada
+    # -------------------------
+    # 3) Bonus de seguranças
+    # -------------------------
     num_segurancas = len(meu.get("safeties", []))
     num_segurancas_op = len(oponente.get("safeties", []))
 
     bonus_segurancas_meu = num_segurancas * 100
     bonus_segurancas_op = num_segurancas_op * 100
 
-    # Bônus de 1000 pontos por ter as 4 seguranças
     bonus_todas_segurancas_meu = 1000 if num_segurancas == 4 else 0
     bonus_todas_segurancas_op = 1000 if num_segurancas_op == 4 else 0
 
-    # 4. Total de Coups Fourrés (300 pontos por cada resposta)
+    # -----------------------------
+    # 4) Coup fourré (300 cada)
+    # -----------------------------
     total_safety_responses_meu = meu.get("safety_responses", 0)
     total_safety_responses_op = oponente.get("safety_responses", 0)
 
-    # 5. Distância é o ponto mais básico
-
-    # 6. Bônus de Vitória (1000km)
+    # -----------------------------
+    # 6) Bônus de vitória
+    # -----------------------------
     bonus_vitoria = 400 if winner else 0
     bonus_vitoria_op = 400 if winner_op else 0
 
-    # 7. Bônus de Zero (Oponente sem cartas/zero distance)
+    # -----------------------------
+    # 7) Bônus de ZERO km
+    # -----------------------------
+    bonus_zero_meu = (
+        500 if distance == 1000 and distance_op == 0 else
+        300 if distance == 700 and meu.get("sem_extensao", "N") == "N" and distance_op == 0 else
+        0
+    )
 
-    placar_mao = {
+    bonus_zero_op = (
+        500 if distance_op == 1000 and distance == 0 else
+        300 if distance_op == 700 and oponente.get("sem_extensao", "N") == "N" and distance == 0 else
+        0
+    )
+
+    # -----------------------------
+    # 8) BONUS EXTENSÃO (300)
+    # -----------------------------
+    bonus_ext_meu = 300 if extensao else 0
+    bonus_ext_op = 300 if extensao_op else 0
+
+    # -------------------------------------------------
+    # 9) MONTAR OBJETO DE PLACAR (meu e oponente)
+    # -------------------------------------------------
+    placar_meu = {
         "distancia": distance,
         "bonus_vitoria": bonus_vitoria,
-        "bonus_segurancas": bonus_segurancas_meu,  # 100pts por segurança
-        "bonus_todas_segurancas": bonus_todas_segurancas_meu,  # 1000pts por 4 seguranças
+        "bonus_segurancas": bonus_segurancas_meu,
+        "bonus_todas_segurancas": bonus_todas_segurancas_meu,
         "total_coup_fourre": total_safety_responses_meu * 300,
-        "bonus_zero": (
-            500 if distance == 1000 and distance_op == 0 else
-            300 if distance == 700 and meu.get("sem_extensao", "N") == "N" and distance_op == 0 else
-            0
-        ),
-        "oponente_zero": (
-            500 if distance_op == 1000 and distance == 0 else
-            300 if distance_op == 700 and oponente.get("sem_extensao", "N") == "N" and distance == 0 else
-            0
-        ),
-        "bonus_extensao": 300 if extensao else 0,
+        "bonus_zero": bonus_zero_meu,
+        "oponente_zero": bonus_zero_op,
+        "bonus_extensao": bonus_ext_meu,
         "fim_do_baralho": bonus_fim_baralho,
     }
 
-    # Bônus de 700km e Zero
-    if meu.get("sem_extensao", "N") == "S" and distance == 700:
-        # Se 700km foi alcançado sem extensão, o bônus de 300km não se aplica
-        placar_mao["bonus_zero"] = 0
-        placar_mao["bonus_extensao"] = 0
+    placar_meu["total_da_mao"] = sum(placar_meu.values())
 
-    # A soma é corrigida para somar todos os bônus
-    placar_mao["total_da_mao"] = sum(placar_mao.values()) - (
-        500 if meu.get("sem_extensao", "N") == "S" and distance == 700 else 0)
-
-    placar_oponente = {
+    placar_op = {
         "distancia": distance_op,
         "bonus_vitoria": bonus_vitoria_op,
-        "bonus_segurancas": bonus_segurancas_op,  # 100pts por segurança
-        "bonus_todas_segurancas": bonus_todas_segurancas_op,  # 1000pts por 4 seguranças
+        "bonus_segurancas": bonus_segurancas_op,
+        "bonus_todas_segurancas": bonus_todas_segurancas_op,
         "total_coup_fourre": total_safety_responses_op * 300,
-        "bonus_zero": (
-            500 if distance_op == 1000 and distance == 0 else
-            300 if distance_op == 700 and oponente.get("sem_extensao", "N") == "N" and distance == 0 else
-            0
-        ),
-        "oponente_zero": (
-            500 if distance == 1000 and distance_op == 0 else
-            300 if distance == 700 and meu.get("sem_extensao", "N") == "N" and distance_op == 0 else
-            0
-        ),
-        "bonus_extensao": 300 if extensao_op else 0,
+        "bonus_zero": bonus_zero_op,
+        "oponente_zero": bonus_zero_meu,
+        "bonus_extensao": bonus_ext_op,
         "fim_do_baralho": bonus_fim_baralho_op,
     }
 
-    if oponente.get("sem_extensao", "N") == "S" and distance_op == 700:
-        placar_oponente["bonus_zero"] = 0
-        placar_oponente["bonus_extensao"] = 0
+    placar_op["total_da_mao"] = sum(placar_op.values())
 
-    placar_oponente["total_da_mao"] = sum(placar_oponente.values()) - (
-        500 if oponente.get("sem_extensao", "N") == "S" and distance_op == 700 else 0)
+    # -----------------------------------------
+    # 10) Atualizar total geral acumulado
+    # -----------------------------------------
+    total_geral_meu = meu.get("placar", {}).get("total_geral", 0) + placar_meu["total_da_mao"]
+    total_geral_op = oponente.get("placar", {}).get("total_geral", 0) + placar_op["total_da_mao"]
 
-    # 🧮 Soma do total geral
-    novo_total_meu = meu.get("placar", {}).get("total_geral", 0) + placar_mao["total_da_mao"]
-    novo_total_oponente = oponente.get("placar", {}).get("total_geral", 0) + placar_oponente["total_da_mao"]
-
-    # 📝 Atualizar Firestore
+    # -----------------------------------------
+    # 11) Salvar no Firestore
+    # -----------------------------------------
     updates = {
-        f"{meu_caminho}.placar.atual_mao": placar_mao,
-        f"{meu_caminho}.placar.total_geral": novo_total_meu,
+        f"{meu_caminho}.placar.atual_mao": placar_meu,
+        f"{meu_caminho}.placar.total_geral": total_geral_meu,
         f"{meu_caminho}.placar_registrado": True,
         f"{meu_caminho}.placar_visto": False,
-        f"{oponente_caminho}.placar.atual_mao": placar_oponente,
-        f"{oponente_caminho}.placar.total_geral": novo_total_oponente,
+
+        f"{oponente_caminho}.placar.atual_mao": placar_op,
+        f"{oponente_caminho}.placar.total_geral": total_geral_op,
         f"{oponente_caminho}.placar_registrado": True,
         f"{oponente_caminho}.placar_visto": False,
-        "game_status": "finished"  # Finaliza a MÃO
+
+        "game_status": "finished",
     }
+
+    sala_ref.update(updates)
+
+
+def resetar_partida(sala_ref):
+    """
+    Reseta completamente a sala para uma nova partida do zero.
+    Zera totais gerais e remove todos os estados prévios.
+    """
+    updates = {
+        # Zera placar
+        "player1.placar": {"total_geral": 0, "atual_mao": {}},
+        "player2.placar": {"total_geral": 0, "atual_mao": {}},
+        "player1.placar_registrado": False,
+        "player2.placar_registrado": False,
+
+        # Reset flags gerais
+        "player1.finalizar": False,
+        "player2.finalizar": False,
+        "player1.winner": False,
+        "player2.winner": False,
+        "player1.extensao": False,
+        "player2.extensao": False,
+        "player1.aguardando_extensao": False,
+        "player2.aguardando_extensao": False,
+
+        # Estado base
+        "player1.status": "Luz Verde",
+        "player2.status": "Luz Verde",
+        "player1.limite": False,
+        "player2.limite": False,
+        "player1.distance": 0,
+        "player2.distance": 0,
+
+        # Cartas e mesa
+        "player1.hand": [],
+        "player2.hand": [],
+        "player1.safeties": [],
+        "player2.safeties": [],
+        "player1.safety_responses": 0,
+        "player2.safety_responses": 0,
+
+        # Novo deck será criado pelo distribuir_cartas()
+        "deck": [],
+
+        # Estado geral do jogo
+        "turn": None,
+        "game_status": "waiting_start",
+
+        "player1.placar_visto": True,
+        "player2.placar_visto": True,
+    }
+
+    sala_ref.update(updates)
+
+
+def resetar_mao(sala_ref):
+    """
+    Limpa estados da mão anterior para começar outra sem perder o placar acumulado.
+    """
+    updates = {
+        # Estado de jogo
+        "game_status": "playing",
+        "placar_calculado": False,
+        "turn": "player1",   # jogador 1 SEMPRE começa a nova mão (regra do Mille Bornes)
+
+        # Flags gerais
+        "extensao_ativa": False,
+
+        # Jogador 1
+        "player1.finalizar": False,
+        "player1.extensao": False,
+        "player1.aguardando_extensao": False,
+        "player1.status": "Luz Verde",
+        "player1.limite": False,
+        "player1.distance": 0,
+        "player1.hand": [],
+        "player1.safeties": [],
+        "player1.safety_responses": 0,
+        "player1.last_card_played": None,
+        "player1.com_200": "N",
+        "player1.placar_registrado": False,
+        "player1.placar_visto": False,
+
+        # Placar da mão (zerado)
+        "player1.placar.atual_mao": {
+            "distancia": 0,
+            "segurancas": 0,
+            "todas_segurancas": 0,
+            "seguranca_em_resposta": 0,
+            "percurso_completo": 0,
+            "com_200": 0,
+            "oponente_zero": 0,
+            "bonus_extensao": 0,
+            "fim_do_baralho": 0,
+            "total_da_mao": 0,
+        },
+
+        # Jogador 2
+        "player2.finalizar": False,
+        "player2.extensao": False,
+        "player2.aguardando_extensao": False,
+        "player2.status": "Luz Verde",
+        "player2.limite": False,
+        "player2.distance": 0,
+        "player2.hand": [],
+        "player2.safeties": [],
+        "player2.safety_responses": 0,
+        "player2.last_card_played": None,
+        "player2.com_200": "N",
+        "player2.placar_registrado": False,
+        "player2.placar_visto": False,
+
+        "player2.placar.atual_mao": {
+            "distancia": 0,
+            "segurancas": 0,
+            "todas_segurancas": 0,
+            "seguranca_em_resposta": 0,
+            "percurso_completo": 0,
+            "com_200": 0,
+            "oponente_zero": 0,
+            "bonus_extensao": 0,
+            "fim_do_baralho": 0,
+            "total_da_mao": 0,
+        },
+
+        # Novo deck deve ser sobrescrito depois pelo jogo.py
+        "deck": [],
+    }
+
     sala_ref.update(updates)

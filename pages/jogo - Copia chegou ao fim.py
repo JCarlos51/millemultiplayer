@@ -318,35 +318,32 @@ def jogo_view(page: ft.Page):
             barra_distancia_computador.current.update()
 
     def mostrar_extensao_dialogo(e=None):
-        print("🪧 Abrindo diálogo de extensão...")
+        # print("🪧 Abrindo diálogo de extensão...")
+        # 🔒 Garante que não há outro diálogo aberto
+        if hasattr(page, "dialog") and page.dialog:
+            page.dialog.open = False
+            page.dialog = None
+            page.update()
 
-        # Não feche diálogos existentes. Apenas abra o novo.
         page.dialog = dialog_extensao
         dialog_extensao.open = True
         page.update()
 
-    def aceitar_extensao(e):
-        print("🟢 Jogador ACEITOU a extensão — ativando e passando turno.")
+    def aceitar_extensao(e=None):
+        sala_ref.update({
+            f"{estado_jogo['meu_caminho']}.extensao": True,
+            f"{estado_jogo['meu_caminho']}.aguardando_extensao": False,
+            "extensao_ativa": False,
+            "aguardando_extensao": False,
+            "turn": "player2" if estado_jogo["eh_player1"] else "player1"
+        })
 
-        eh_player1_local = estado_jogo.get("eh_player1", None)
-        if eh_player1_local is None:
-            print("⚠️ ERRO: estado_jogo['eh_player1'] não definido.")
-            return
+        estado_jogo["ja_exibiu_dialogo_extensao"] = True
 
-        novo_turno = "player1" if not eh_player1_local else "player2"
-
-        try:
-            sala_ref.update({
-                "extensao_ativa": True,
-                "player1.aguardando_extensao": False,
-                "player2.aguardando_extensao": False,
-                "turn": novo_turno
-            })
-        except Exception as ex:
-            print(f"⚠️ Erro ao ativar extensão/turno: {ex}")
-
-        dialog_extensao.open = False
-        page.update()
+        if hasattr(page, "dialog") and page.dialog:
+            page.dialog.open = False
+            page.dialog = None  # 🧼 importante para limpar corretamente
+            page.update()
 
     def recusar_extensao(e=None):
         """
@@ -510,7 +507,7 @@ def jogo_view(page: ft.Page):
                 return
 
             # ---------------------------------------------------------
-            # 1) REDIRECIONAMENTO RÁPIDO PARA PLACAR (se já terminou)
+            # 1) REDIRECIONAMENTO PARA PLACAR (se jogo terminou)
             # ---------------------------------------------------------
             if (
                     data.get("game_status") == "finished"
@@ -526,26 +523,25 @@ def jogo_view(page: ft.Page):
                 return
 
             # ---------------------------------------------------------
-            # 2) BLOQUEIO LOCAL TEMPORÁRIO (ex: enquanto um diálogo está aberto)
+            # 2) BLOQUEIO LOCAL TEMPORÁRIO (ex: diálogo extensão)
             # ---------------------------------------------------------
             if estado_jogo.get("bloquear_atualizacoes", False):
                 return
 
-            jogador_1 = data.get("player1", {}) or {}
-            jogador_2 = data.get("player2", {}) or {}
+            jogador_1 = data.get("player1", {})
+            jogador_2 = data.get("player2", {})
 
             p1_id = jogador_1.get("id")
             p2_id = jogador_2.get("id")
 
             # ---------------------------------------------------------
-            # 3) IDENTIFICAÇÃO DO JOGADOR
+            # 3) IDENTIFICAÇÃO DO JOGADOR (robusto)
             # ---------------------------------------------------------
             if jogador_id == p1_id:
                 eh_player1 = True
             elif jogador_id == p2_id:
                 eh_player1 = False
             else:
-                # auto-registro se ainda não estiver na sala
                 if not p1_id:
                     sala_ref.update({
                         "player1": {
@@ -580,44 +576,39 @@ def jogo_view(page: ft.Page):
                     })
                 return
 
-            # ---------------------------------------------------------
-            # 4) ATUALIZAR REFERÊNCIAS DO JOGADOR (CRÍTICO)
-            #    SEMPRE usar o estado mais recente do Firestore
-            # ---------------------------------------------------------
             estado_jogo["eh_player1"] = eh_player1
-
-            meu = jogador_1 if eh_player1 else jogador_2
-            oponente = jogador_2 if eh_player1 else jogador_1
-
-            estado_jogo["meu"] = meu
+            estado_jogo["meu"] = jogador_1 if eh_player1 else jogador_2
             estado_jogo["meu_caminho"] = "player1" if eh_player1 else "player2"
 
-            turno_atual = data.get("turn", "") or ""
+            turno_atual = data.get("turn", "")
             estado_jogo["turno"] = turno_atual
 
             # ---------------------------------------------------------
-            # 5) FAILSAFE DE TURNO (se algo ficar sem "player1"/"player2")
+            # 4) FAILSAFE DE TURNO
             # ---------------------------------------------------------
             if turno_atual not in ("player1", "player2"):
                 novo_turno = "player1" if p1_id else "player2"
                 try:
                     sala_ref.update({"turn": novo_turno})
                     estado_jogo["turno"] = novo_turno
-                    turno_atual = novo_turno
-                except Exception as e:
-                    print(f"⚠️ Erro ao corrigir turno: {e}")
+                except:
+                    pass
 
             # ---------------------------------------------------------
-            # 6) STORAGE LOCAL
+            # 5) ARMAZENAMENTO LOCAL
             # ---------------------------------------------------------
             try:
                 page.client_storage.set("meu_caminho", estado_jogo["meu_caminho"])
                 page.client_storage.set("eh_player1", eh_player1)
-            except Exception:
+            except:
                 pass
 
+            meu = estado_jogo["meu"]
+            oponente = jogador_2 if eh_player1 else jogador_1
+
             # ---------------------------------------------------------
-            # 7) RESET UI QUANDO O DECK É CRIADO
+            # 6) RESET LOCAL da UI quando deck é criado
+            #    (corrigido para resetar também flags da extensão)
             # ---------------------------------------------------------
             if (
                     data.get("game_status") == "started"
@@ -625,15 +616,20 @@ def jogo_view(page: ft.Page):
                     and not estado_jogo.get("resetei_para_nova_mao", False)
             ):
                 print("🔄 Reset completo da UI para nova mão (gatilho: deck recriado).")
+
+                # IMPORTANTÍSSIMO — RESET QUE FALTAVA
+                estado_jogo["bloquear_atualizacoes"] = False
+                estado_jogo["aguardando_minha_extensao"] = False
                 estado_jogo["ja_exibiu_dialogo_extensao"] = False
                 estado_jogo["ja_exibiu_placar"] = False
+
                 estado_jogo["resetei_para_nova_mao"] = True
 
             if data.get("game_status") == "finished":
                 estado_jogo["resetei_para_nova_mao"] = False
 
             # ---------------------------------------------------------
-            # 8) SE O DECK SUMIU → CRIA NOVO
+            # 7) CRIAÇÃO AUTOMÁTICA DO DECK
             # ---------------------------------------------------------
             if "deck" not in data or not data["deck"]:
                 print("🔄 Reset completo da UI para nova mão (deck removido ou vazio).")
@@ -642,20 +638,24 @@ def jogo_view(page: ft.Page):
                 return
 
             # ---------------------------------------------------------
-            # 9) EXTENSÃO (mostrar diálogo quando EU estou aguardando)
+            # 8) EXTENSÃO — EXIBIR DIÁLOGO (VERSÃO CORRIGIDA)
             # ---------------------------------------------------------
-            if (
-                    meu.get("aguardando_extensao", False)
-                    and not estado_jogo.get("ja_exibiu_dialogo_extensao", False)
-            ):
+            aguardando_ext = meu.get("aguardando_extensao", False)
+
+            if aguardando_ext and not estado_jogo.get("ja_exibiu_dialogo_extensao", False):
                 print("⏳ Extensão pendente — exibindo diálogo.")
                 estado_jogo["ja_exibiu_dialogo_extensao"] = True
+
+                # 🔥 CORREÇÃO CRÍTICA:
+                estado_jogo["bloquear_atualizacoes"] = True
                 mostrar_extensao_dialogo()
+                return
 
             # ---------------------------------------------------------
-            # 10) CÁLCULO DE is_my_turn
+            # 9) ATUALIZAÇÕES DE UI — NOVO CÁLCULO DE is_my_turn
             # ---------------------------------------------------------
-            mao_atual = meu.get("hand", []) or []
+            deck = data.get("deck", [])
+            mao_atual = meu.get("hand", [])
             tem_cartas = len(mao_atual) > 0
 
             turno_meu = (
@@ -665,89 +665,67 @@ def jogo_view(page: ft.Page):
 
             is_my_turn = turno_meu and tem_cartas
 
-            # Se eu estou com diálogo de extensão aberto,
-            # continuo “com a vez”, mas não deixo clicar outra carta.
-            if meu.get("aguardando_extensao", False):
-                is_my_turn = True
+            novo_nome_oponente = oponente.get("nome", "Oponente")
+            if nome_oponente.current:
+                nome_oponente.current.value = novo_nome_oponente
 
-            # ---------------------------------------------------------
-            # 11) ATUALIZAÇÕES DE UI (SEGURO)
-            # ---------------------------------------------------------
-            deck = data.get("deck", [])  # garante que deck existe
+            progression_bars_area.atualizar_nomes(novo_nome_oponente)
+            if area_oponente.nome_jogador != novo_nome_oponente:
+                area_oponente.update_nome_jogador(novo_nome_oponente)
 
-            # Nome do oponente
-            if nome_oponente is not None and getattr(nome_oponente, "current", None):
-                nome_oponente.current.value = oponente.get("nome", "Oponente")
+            nome_local.current.value = f"🃏 Cartas no deck: {len(deck)}"
 
-            if progression_bars_area:
-                progression_bars_area.atualizar_nomes(oponente.get("nome", "Oponente"))
+            area_jogador_local.atualizar_ui(
+                meu,
+                is_my_turn,
+                len(deck),
+                tentar_jogar_carta
+            )
+            area_oponente.atualizar_ui(oponente)
+            atualizar_barras(meu.get("distance", 0), oponente.get("distance", 0))
 
-            if area_oponente:
-                area_oponente.update_nome_jogador(oponente.get("nome", "Oponente"))
-
-            # Label “Cartas no deck”
-            if nome_local is not None and getattr(nome_local, "current", None):
-                nome_local.current.value = f"🃏 Cartas no deck: {len(deck)}"
-
-            # Área do jogador local
-            if area_jogador_local:
-                area_jogador_local.atualizar_ui(
-                    meu,
-                    is_my_turn,
-                    len(deck),
-                    tentar_jogar_carta,
-                )
-
-            # Área do oponente
-            if area_oponente:
-                area_oponente.atualizar_ui(oponente)
-
-            # Barras de progresso
-            if callable(atualizar_barras):
-                atualizar_barras(meu.get("distance", 0), oponente.get("distance", 0))
-
-            # Semáforos
             if is_my_turn:
-                if area_jogador_local and getattr(area_jogador_local, "traffic_light",
-                                                  None) and area_jogador_local.traffic_light.current:
-                    area_jogador_local.traffic_light.current.src = "images/green_light.png"
-                if area_oponente and getattr(area_oponente, "traffic_light",
-                                             None) and area_oponente.traffic_light.current:
-                    area_oponente.traffic_light.current.src = "images/red_light.png"
+                area_jogador_local.traffic_light.current.src = "images/green_light.png"
+                area_oponente.traffic_light.current.src = "images/red_light.png"
             else:
-                if area_jogador_local and getattr(area_jogador_local, "traffic_light",
-                                                  None) and area_jogador_local.traffic_light.current:
-                    area_jogador_local.traffic_light.current.src = "images/red_light.png"
-                if area_oponente and getattr(area_oponente, "traffic_light",
-                                             None) and area_oponente.traffic_light.current:
-                    area_oponente.traffic_light.current.src = "images/green_light.png"
+                area_jogador_local.traffic_light.current.src = "images/red_light.png"
+                area_oponente.traffic_light.current.src = "images/green_light.png"
 
             # ---------------------------------------------------------
-            # 12) PLACAR FINAL
+            # 10) PLACAR FINAL
             # ---------------------------------------------------------
             if (
                     data.get("game_status") == "finished"
                     and not jogador_1.get("aguardando_extensao", False)
                     and not jogador_2.get("aguardando_extensao", False)
             ):
+
                 if not data.get("placar_calculado", False):
                     try:
                         print("🧮 Calculando placar final...")
                         calcular_e_enviar_placar_final(sala_ref, estado_jogo)
                         sala_ref.update({"placar_calculado": True})
                         print("✅ Placar calculado e salvo no Firestore.")
+
+                        try:
+                            snapshot_atual = sala_ref.get()
+                            sala_ref.set(snapshot_atual.to_dict(), merge=True)
+                        except Exception as e:
+                            print(f"⚠️ Falha ao forçar refresh: {e}")
+
                         page.go("/placar")
                         return
+
                     except Exception as e:
                         print(f"⚠️ Erro ao calcular placar final: {e}")
                         return
 
-                if not estado_jogo.get("ja_exibiu_placar", False):
+                if data.get("placar_calculado", False) and not estado_jogo.get("ja_exibiu_placar", False):
                     estado_jogo["ja_exibiu_placar"] = True
 
-                    def delayed():
+                    def delayed_redirect():
                         import time
-                        time.sleep(1)
+                        time.sleep(1.2)
                         try:
                             print("➡️ Indo para o placar...")
                             page.go("/placar")
@@ -755,14 +733,15 @@ def jogo_view(page: ft.Page):
                             print(f"⚠️ Erro ao redirecionar: {e}")
 
                     import threading
-                    threading.Thread(target=delayed, daemon=True).start()
+                    threading.Thread(target=delayed_redirect, daemon=True).start()
 
             # ---------------------------------------------------------
-            # 13) UPDATE FINAL
+            # 11) UPDATE FINAL DA PÁGINA
             # ---------------------------------------------------------
             try:
-                page.update()
-            except Exception:
+                if hasattr(page, "update") and callable(page.update):
+                    page.update()
+            except:
                 pass
 
     sala_ref.on_snapshot(on_snapshot)

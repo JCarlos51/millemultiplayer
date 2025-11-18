@@ -38,9 +38,5 @@ def create_deck():
         for valor, quantidade in cartas.items():
             deck.extend([{"type": tipo, "value": valor} for _ in range(quantidade)])
     shuffle(deck)
-    shuffle(deck)
-    shuffle(deck)
-    shuffle(deck)
-    shuffle(deck)
     # print(f'deck: {deck}')
     return deck
