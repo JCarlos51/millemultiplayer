@@ -3,9 +3,9 @@ from random import shuffle
 # Quantidade oficial de cartas no Mille Bornes
 CARD_DEFINITIONS = {
     "distancia": {
-        "25 km": 1,
-        "50 km": 1,
-        "75 km": 1,
+        "25 km": 10,
+        "50 km": 10,
+        "75 km": 10,
         "100 km": 13,
         "200 km": 2
     },
@@ -17,11 +17,11 @@ CARD_DEFINITIONS = {
         "Luz Vermelha": 4
     },
     "defesa": {
-        "Estepe": 1,
-        "Gasolina": 1,
-        "Conserto": 1,
-        "Fim de Limite": 1,
-        "Luz Verde": 4
+        "Estepe": 6,
+        "Gasolina": 6,
+        "Conserto": 6,
+        "Fim de Limite": 6,
+        "Luz Verde": 14
     },
     "segurança": {
         "Tanque Extra": 1,
