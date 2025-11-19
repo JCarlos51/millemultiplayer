@@ -72,7 +72,8 @@ def distribuir_cartas(sala_ref, deck):
         "player1.hand": deck[:7],
         "player2.hand": deck[7:14],
         "turn": "player1",
-        "game_status": "started"
+        "game_status": "started",
+        "baralho": True
     }
     sala_ref.update(updates)
 

@@ -248,6 +248,7 @@ def placar_view(page: ft.Page):
         updates["turn"] = "player1"
         updates["placar_calculado"] = False  # garante que a próxima mão volte a calcular normalmente
         updates["extensao_ativa"] = False
+        updates["baralho"] = False
 
         # print("atualiza firestore")
         sala_ref.update(updates)

@@ -149,7 +149,8 @@ def login_view(page: ft.Page):
                         },
                         "player1.oponente": nome_jogador,
                         "game_status": "ready",
-                        "turn": "player1"
+                        "turn": "player1",
+                        "baralho": False
                     })
                     return True
 
@@ -191,6 +192,7 @@ def login_view(page: ft.Page):
                         "com_200": "N",
                         "placar": {"total_geral": 0, "atual_mao": {}},
                     },
+                    "baralho": False,
                     "turn": "player1",
                     "game_status": "waiting",
                     "player1_nome_cf": jogador_cf,

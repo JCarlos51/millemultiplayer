@@ -194,8 +194,6 @@ def jogo_view(page: ft.Page):
 
     LIMITE_DISTANCIA = 1000
 
-    # O bloco de código original de `progression_bars_area = ft.Column(...)` foi substituído acima
-
     # Área do oponente
     oponente_area = ft.Container(
         expand=True,
@@ -638,7 +636,7 @@ def jogo_view(page: ft.Page):
             # ---------------------------------------------------------
             # 8) SE O DECK SUMIU → CRIA NOVO
             # ---------------------------------------------------------
-            if "deck" not in data or not data["deck"]:
+            if ("deck" not in data or not data["deck"]) and not data["baralho"]:
                 print("🔄 Reset completo da UI para nova mão (deck removido ou vazio).")
                 if p1_id and p2_id:
                     distribuir_cartas_internamente()
@@ -736,7 +734,19 @@ def jogo_view(page: ft.Page):
                 if not data.get("placar_calculado", False):
                     try:
                         print("🧮 Calculando placar final...")
-                        calcular_e_enviar_placar_final(sala_ref, estado_jogo)
+
+                        deck_local = data.get("deck", [])
+                        mao1 = jogador_1.get("hand", []) or []
+                        mao2 = jogador_2.get("hand", []) or []
+                        fim_de_baralho = (not deck_local) and (len(mao1) == 0) and (len(mao2) == 0)
+
+                        if fim_de_baralho:
+                            # 🔥 Caso especial: fim de baralho
+                            finalizar_mao_por_fim_de_baralho(sala_ref)
+                        else:
+                            # 🛣 Caso normal: 700 / 1000 / recusa de extensão
+                            calcular_e_enviar_placar_final(sala_ref, estado_jogo, reescrever_placar=False)
+
                         sala_ref.update({"placar_calculado": True})
                         print("✅ Placar calculado e salvo no Firestore.")
                         page.go("/placar")
@@ -802,170 +812,226 @@ def jogo_view(page: ft.Page):
     # 4. Retorna a view configurada
     return view
 
-def calcular_e_enviar_placar_final(sala_ref, estado_jogo):
+
+def calcular_e_enviar_placar_final(sala_ref, estado_jogo, reescrever_placar: bool = False):
     snapshot = sala_ref.get()
-    sala_data = snapshot.to_dict()
+    sala_data = snapshot.to_dict() or {}
 
     meu_caminho = estado_jogo["meu_caminho"]
     oponente_caminho = "player2" if meu_caminho == "player1" else "player1"
 
-    meu = sala_data.get(meu_caminho, {})
-    oponente = sala_data.get(oponente_caminho, {})
+    meu = sala_data.get(meu_caminho, {}) or {}
+    op = sala_data.get(oponente_caminho, {}) or {}
 
-    # print(f"🚗 Estado do jogador: distancia={meu.get('distance')} | com_200={meu['com_200']}")
-
-    # print("📍 ENTRANDO EM calcular_e_enviar_placar_final")
-
-    # ✅ Evita computar placar duplicado
-    if meu.get("placar_registrado", False):
+    # Evita duplicatas, exceto quando queremos reescrever (fim de baralho)
+    if meu.get("placar_registrado", False) and not reescrever_placar:
         print("⚠️ Placar já foi registrado para este jogador. Ignorando duplicata.")
         return
 
     deck_vazio = not sala_data.get("deck")
 
-    # Variáveis do Jogador Local (MEU)
-    distance = meu.get("distance", 0)
-    extensao = meu.get("extensao", False)
-    safeties = meu.get("safeties", [])
-    resposta = meu.get("safety_responses", 0)
+    # ===============================
+    # 🔢 Coleta de dados brutos
+    # ===============================
+    dist = meu.get("distance", 0)
+    dist_op = op.get("distance", 0)
 
-    # Variáveis do Oponente
-    distance_op = oponente.get("distance", 0)
-    extensao_op = oponente.get("extensao", False)
-    safeties_op = oponente.get("safeties", [])
-    resposta_op = oponente.get("safety_responses", 0)
+    ext = meu.get("extensao", False)
+    ext_op = op.get("extensao", False)
 
-    # ====================================================================
-    # 🎯 LÓGICA CORRIGIDA PARA BÔNUS 'PERCURSO COMPLETADO'
-    # ====================================================================
+    saf = meu.get("safeties", [])
+    saf_op = op.get("safeties", [])
 
-    # 1. Determina o limite de distância FINAL da mão (1000km se qualquer um aceitou a extensão)
-    limite_efetivo = 1000 if extensao or extensao_op else 700
+    resp = meu.get("safety_responses", 0)
+    resp_op = op.get("safety_responses", 0)
 
-    # Lógica para o Jogador Local (MEU)
-    # 2. Verifica se MEU atingiu o limite FINAL da mão (700km ou 1000km)
-    atingiu_limite_final = (
-            (distance == 1000 and limite_efetivo == 1000) or
-            (distance == 700 and limite_efetivo == 700)
-    )
+    # ==========================================================
+    # 🎯 1) Limite efetivo final da mão (700 ou 1000)
+    # ==========================================================
+    limite_efetivo = 1000 if ext or ext_op else 700
 
-    # 3. Define se MEU é o Vencedor da Mão: Atingiu o limite FINAL E tem a maior distância.
-    #    (Se o deck acabou e ambos atingiram o limite, é um empate, ambos recebem o bônus)
-    eh_vencedor_da_mao = (
-            atingiu_limite_final and
-            distance >= distance_op
-    )
+    # ==========================================================
+    # 🎯 2) Verifica quem atingiu o limite final
+    # ==========================================================
+    atingiu_meu = (dist == limite_efetivo)
+    atingiu_op = (dist_op == limite_efetivo)
 
-    # 4. Aplica o bônus de Percurso Completado
-    placar_mao_percurso_completo = 0
-    # O bônus é aplicado se é o vencedor que atingiu o limite, ou se o deck acabou (empate) e atingiu o limite.
-    if eh_vencedor_da_mao:
-        if limite_efetivo == 1000:
-            placar_mao_percurso_completo = 300
-        elif limite_efetivo == 700:
-            placar_mao_percurso_completo = 200
+    # ==========================================================
+    # 🎯 3) Vencedor da mão
+    # ==========================================================
+    vencedor_meu = atingiu_meu and dist >= dist_op
+    vencedor_op = atingiu_op and dist_op >= dist
 
-    # 🎯 Bônus por fim de baralho
-    # Corrigido: o bônus de fim de baralho só deve ser dado se o jogador completou o percurso e o deck esgotou
-    bonus_fim_baralho = 0
-    if deck_vazio and atingiu_limite_final:
-        bonus_fim_baralho = 500 if limite_efetivo == 700 else 400
+    # ==========================================================
+    # 🎯 4) Bônus percurso completo
+    # ==========================================================
+    bonus_pc_meu = 0
+    bonus_pc_op = 0
 
-    placar_mao = {
-        "distancia": distance,
-        "segurancas": len(safeties) * 100,
-        "todas_segurancas": 400 if len(safeties) == 4 else 0,
-        "seguranca_em_resposta": resposta * 300,
-        "percurso_completo": placar_mao_percurso_completo,  # <-- CORRIGIDO AQUI
+    if vencedor_meu:
+        bonus_pc_meu = 300 if limite_efetivo == 1000 else 200
+
+    if vencedor_op:
+        bonus_pc_op = 300 if limite_efetivo == 1000 else 200
+
+    # ==========================================================
+    # 🎯 5) Bônus fim do baralho (campo sempre presente!)
+    # ==========================================================
+    bonus_fb_meu = 0
+    bonus_fb_op = 0
+
+    if deck_vazio:
+        if atingiu_meu:
+            bonus_fb_meu = 500 if limite_efetivo == 700 else 400
+        if atingiu_op:
+            bonus_fb_op = 500 if limite_efetivo == 700 else 400
+
+    # ==========================================================
+    # 🎯 6) Placar MEU — SEMPRE COMPLETO!
+    # ==========================================================
+    placar_meu = {
+        "distancia": dist,
+        "segurancas": len(saf) * 100,
+        "todas_segurancas": 400 if len(saf) == 4 else 0,
+        "seguranca_em_resposta": resp * 300,
+        "percurso_completo": bonus_pc_meu,
         "com_200": (
-            300 if meu.get("com_200") == "N" and distance == 1000 else
-            200 if meu.get("com_200") == "N" and distance == 700 else
+            300 if meu.get("com_200") == "N" and dist == 1000 else
+            200 if meu.get("com_200") == "N" and dist == 700 else
             0
         ),
         "oponente_zero": (
-            500 if distance == 1000 and distance_op == 0 else
-            300 if distance == 700 and distance_op == 0 else
+            500 if dist == 1000 and dist_op == 0 else
+            300 if dist == 700 and dist_op == 0 else
             0
         ),
-        "bonus_extensao": 300 if extensao else 0,
-        "fim_do_baralho": bonus_fim_baralho,
+        "bonus_extensao": 300 if ext else 0,
+        "fim_do_baralho": bonus_fb_meu,  # <-- SEMPRE EXISTE
     }
 
-    placar_mao["total_da_mao"] = sum(placar_mao.values())
+    placar_meu["total_da_mao"] = sum(placar_meu.values())
 
-    # Lógica para o Oponente
-    # 2. Verifica se OPONENTE atingiu o limite FINAL da mão (700km ou 1000km)
-    atingiu_limite_final_op = (
-            (distance_op == 1000 and limite_efetivo == 1000) or
-            (distance_op == 700 and limite_efetivo == 700)
-    )
-
-    # 3. Define se OPONENTE é o Vencedor da Mão: Atingiu o limite FINAL E tem a maior distância (ou empate)
-    eh_vencedor_da_mao_op = (
-            atingiu_limite_final_op and
-            distance_op >= distance
-    )
-
-    # 4. Aplica o bônus de Percurso Completado
-    placar_oponente_percurso_completo = 0
-    if eh_vencedor_da_mao_op:
-        if limite_efetivo == 1000:
-            placar_oponente_percurso_completo = 300
-        elif limite_efetivo == 700:
-            placar_oponente_percurso_completo = 200
-
-    # 🎯 Bônus por fim de baralho
-    bonus_fim_baralho_op = 0
-    if deck_vazio and atingiu_limite_final_op:
-        bonus_fim_baralho_op = 500 if limite_efetivo == 700 else 400
-
-    placar_oponente = {
-        "distancia": distance_op,
-        "segurancas": len(safeties_op) * 100,
-        "todas_segurancas": 400 if len(safeties_op) == 4 else 0,
-        "seguranca_em_resposta": resposta_op * 300,
-        "percurso_completo": placar_oponente_percurso_completo,  # <-- CORRIGIDO AQUI
+    # ==========================================================
+    # 🎯 7) Placar OPONENTE — SEMPRE COMPLETO!
+    # ==========================================================
+    placar_op = {
+        "distancia": dist_op,
+        "segurancas": len(saf_op) * 100,
+        "todas_segurancas": 400 if len(saf_op) == 4 else 0,
+        "seguranca_em_resposta": resp_op * 300,
+        "percurso_completo": bonus_pc_op,
         "com_200": (
-            300 if oponente.get("com_200") == "N" and distance_op == 1000 else
-            200 if oponente.get("com_200") == "N" and distance_op == 700 else
+            300 if op.get("com_200") == "N" and dist_op == 1000 else
+            200 if op.get("com_200") == "N" and dist_op == 700 else
             0
         ),
         "oponente_zero": (
-            500 if distance_op == 1000 and distance == 0 else
-            300 if distance_op == 700 and distance == 0 else
+            500 if dist_op == 1000 and dist == 0 else
+            300 if dist_op == 700 and dist == 0 else
             0
         ),
-        "bonus_extensao": 300 if extensao_op else 0,
-        "fim_do_baralho": bonus_fim_baralho_op,
+        "bonus_extensao": 300 if ext_op else 0,
+        "fim_do_baralho": bonus_fb_op,  # <-- SEMPRE EXISTE
     }
 
-    placar_oponente["total_da_mao"] = sum(placar_oponente.values())
+    placar_op["total_da_mao"] = sum(placar_op.values())
 
-    # 🧮 Soma do total geral
-    novo_total_meu = meu.get("placar", {}).get("total_geral", 0) + placar_mao["total_da_mao"]
-    novo_total_oponente = oponente.get("placar", {}).get("total_geral", 0) + placar_oponente["total_da_mao"]
+    # ==========================================================
+    # 🎯 8) Total geral acumulado
+    #     (se reescrever_placar=True, desconta a última mão antiga)
+    # ==========================================================
+    placar_anterior_meu = meu.get("placar", {}).get("atual_mao", {}) or {}
+    placar_anterior_op = op.get("placar", {}).get("atual_mao", {}) or {}
 
-    # 📝 Atualizar Firestore
-    updates = {
-        # 👇 Jogador local
-        f"{meu_caminho}.placar.atual_mao": placar_mao,
-        f"{meu_caminho}.placar.total_geral": novo_total_meu,
+    total_mao_anterior_meu = placar_anterior_meu.get("total_da_mao", 0)
+    total_mao_anterior_op = placar_anterior_op.get("total_da_mao", 0)
+
+    total_geral_atual_meu = meu.get("placar", {}).get("total_geral", 0)
+    total_geral_atual_op = op.get("placar", {}).get("total_geral", 0)
+
+    if reescrever_placar:
+        base_meu = max(0, total_geral_atual_meu - total_mao_anterior_meu)
+        base_op = max(0, total_geral_atual_op - total_mao_anterior_op)
+    else:
+        base_meu = total_geral_atual_meu
+        base_op = total_geral_atual_op
+
+    total_meu = base_meu + placar_meu["total_da_mao"]
+    total_op = base_op + placar_op["total_da_mao"]
+
+    # ==========================================================
+    # 🎯 9) Atualiza Firestore
+    # ==========================================================
+    sala_ref.update({
+        f"{meu_caminho}.placar.atual_mao": placar_meu,
+        f"{meu_caminho}.placar.total_geral": total_meu,
         f"{meu_caminho}.placar_registrado": True,
-        f"{meu_caminho}.placar_visto": True,  # ✅ Marca que o jogador viu o placar
+        f"{meu_caminho}.placar_visto": True,
 
-        # 👇 Oponente – também recebe a mão e é marcado como já registrado
-        f"{oponente_caminho}.placar.atual_mao": placar_oponente,
-        f"{oponente_caminho}.placar.total_geral": novo_total_oponente,
+        f"{oponente_caminho}.placar.atual_mao": placar_op,
+        f"{oponente_caminho}.placar.total_geral": total_op,
         f"{oponente_caminho}.placar_registrado": True,
-    }
+    })
 
-    # 🧠 Verifica se é fim de jogo com vencedor
-    fim_de_jogo = (novo_total_meu >= 5000 or novo_total_oponente >= 5000) and (novo_total_meu != novo_total_oponente)
 
-    # 📝 Envia atualizações para o Firestore
+def finalizar_mao_por_fim_de_baralho(sala_ref):
+    """
+    Finaliza a mão quando o baralho acaba e ambos jogadores estão sem cartas,
+    recalculando o placar usando a mesma lógica de 700/1000km,
+    mas permitindo reescrever a última mão (caso outro fluxo já tenha gravado algo).
+    """
+    snapshot = sala_ref.get()
+    sala_data = snapshot.to_dict() or {}
+
+    player1 = sala_data.get("player1", {}) or {}
+    player2 = sala_data.get("player2", {}) or {}
+    deck = sala_data.get("deck", [])
+
+    mao1 = player1.get("hand", []) or []
+    mao2 = player2.get("hand", []) or []
+
+    # Garante que é fim de baralho + mãos vazias
+    if deck or mao1 or mao2:
+        return
+
+    print("🛑 Fim de baralho detectado — finalizando mão por falta de cartas.")
+
+    dist1 = player1.get("distance", 0)
+    dist2 = player2.get("distance", 0)
+
+    if dist1 > dist2:
+        vencedor = "player1"
+        perdedor = "player2"
+    elif dist2 > dist1:
+        vencedor = "player2"
+        perdedor = "player1"
+    else:
+        vencedor = None
+        perdedor = None
+
+    updates = {}
+
+    if vencedor:
+        updates[f"{vencedor}.winner"] = True
+        updates[f"{vencedor}.finalizar"] = True
+        updates[f"{perdedor}.winner"] = False
+        updates[f"{perdedor}.finalizar"] = False
+    else:
+        # Empate: ninguém vence, mas ambos finalizam a mão
+        updates["player1.winner"] = False
+        updates["player2.winner"] = False
+        updates["player1.finalizar"] = True
+        updates["player2.finalizar"] = True
+
     sala_ref.update(updates)
 
-    # print("✅ Placar da mão registrado no Firestore:", placar_mao)
+    if vencedor:
+        estado_jogo = {"meu_caminho": vencedor}
+    else:
+        estado_jogo = {"meu_caminho": "player1"}
+
+    # Recalcula o placar reescrevendo a mão anterior (se houver)
+    calcular_e_enviar_placar_final(sala_ref, estado_jogo, reescrever_placar=True)
 
 
 # ===========================================================
