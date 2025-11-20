@@ -1,6 +1,7 @@
 import flet as ft
 import unicodedata
 import uuid
+import math
 from datetime import datetime, timezone, timedelta
 import os
 import json
@@ -347,6 +348,43 @@ def login_view(page: ft.Page):
         run_spacing=20
     )
 
+    card = ft.Container(
+        content=ft.Row(
+            controls=[
+                ft.Container(
+                    content=ft.Image(
+                        src="images/manual-book.png",
+                        width=45,
+                        tooltip=ft.Tooltip(
+                            message="O baralho consiste de um jogo de 100 cartas. O número entre parenteses indica "
+                                    "quantas cartas existe daquele tipo.  "
+                                    "CAMINHO LIVRE (1), LUZ VERDE (14), LUZ VERMELHA (4), FIM DO LIMITE (6), "
+                                    "LIMITE 50 Km (3), BOM MOTORISTA (1), CONSERTO (6), "
+                                    "ACIDENTE (2), PNEU DE AÇO (1), ESTEPE (6), PNEU FURADO (2), TANQUE EXTRA (1), "
+                                    "GASOLINA (6), SEM GASOLINA (2), 25 Km (10), 50 Km (10), 75 Km (10), 100 Km (13), 200 Km (2)",
+                            border_radius=10,
+                            text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+                            gradient=ft.LinearGradient(
+                                begin=ft.alignment.top_left,
+                                end=ft.alignment.Alignment(0.8, 1),
+                                colors=["#0000FF", "#1E90FF", "#00BFFF"],
+                                tile_mode=ft.GradientTileMode.MIRROR,
+                                rotation=math.pi / 3,
+                            ),
+                        ),
+                    ),
+                    padding=8,
+                    bgcolor="white",
+                    border_radius=8,
+                    border=ft.border.all(width=1, color=ft.Colors.RED),
+                )
+            ],
+            alignment=ft.MainAxisAlignment.START,
+        ),
+        margin=ft.margin.only(top=30, left=20),
+        expand=True
+    )
+
     footer = ft.Container(
         content=ft.Column(
             controls=[
@@ -382,6 +420,7 @@ def login_view(page: ft.Page):
                         controls=[
                             ft.Container(content=navbar),
                             ft.Container(content=header),
+                            ft.Container(content=card),
                             ft.Container(content=footer),
                         ],
                         expand=True,
