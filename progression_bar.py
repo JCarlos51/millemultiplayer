@@ -1,59 +1,75 @@
 import flet as ft
 
 
-class AreaDeProgressoComparativo(ft.Column):
+class AreaDeProgressoComparativo(ft.Container):
     """
     Componente que exibe as barras de progresso comparativas (Jogador Local vs Oponente)
-    e a régua de graduação (0km a 1000km).
+    e a régua de graduação (0km a 1000km), agora 100% responsivo no mobile.
     """
 
-    def __init__(self, barra_jogador: ft.ProgressBar, barra_oponente: ft.ProgressBar, graduacao_regua: ft.Control,
-                 nome_jogador: str, nome_oponente_ref: ft.Ref[ft.Text]):
-        # A referência para o Text do nome do oponente é armazenada para ser atualizada
+    def __init__(self, barra_jogador: ft.ProgressBar, barra_oponente: ft.ProgressBar,
+                 graduacao_regua: ft.Control, nome_jogador: str, nome_oponente_ref: ft.Ref[ft.Text]):
+
         self.nome_oponente_ref = nome_oponente_ref
 
-        # Inicializa o ft.Column, que é o controle raiz e encapsula o layout
         super().__init__(
-            visible=True,
-            spacing=0,
-            controls=[
-                ft.Container(height=10),  # Espaçamento
+            expand=True,
+            width=float("inf"),  # 🔥 Força a ocupar toda a largura disponível (inclusive celular)
+            content=ft.Column(
+                expand=True,
+                width=float("inf"),
+                spacing=8,
+                controls=[
+                    # ----------------------------
+                    # Barra do Jogador Local
+                    # ----------------------------
+                    ft.Column(
+                        expand=True,
+                        width=float("inf"),
+                        spacing=3,
+                        controls=[
+                            ft.Text(
+                                value=nome_jogador,
+                                color="#180F4A",
+                                size=16,
+                                weight=ft.FontWeight.W_500
+                            ),
+                            barra_jogador,
+                        ],
+                    ),
 
-                # 1. Barra do Jogador Local
-                ft.Column(
-                    controls=[
-                        ft.Text(
-                            value=nome_jogador,  # Nome estático do jogador local
-                            color="#180F4A",
-                            size=16,
-                            weight=ft.FontWeight.W_500
-                        ),
-                        barra_jogador,  # ft.ProgressBar passado como argumento
-                    ],
-                    expand=True
-                ),
+                    # ----------------------------
+                    # Barra do Oponente
+                    # ----------------------------
+                    ft.Column(
+                        expand=True,
+                        width=float("inf"),
+                        spacing=3,
+                        controls=[
+                            ft.Text(
+                                ref=self.nome_oponente_ref,
+                                value="Oponente",
+                                color="#180F4A",
+                                size=16,
+                                weight=ft.FontWeight.W_500
+                            ),
+                            barra_oponente,
+                        ],
+                    ),
 
-                ft.Container(height=0),
+                    # ----------------------------
+                    # Régua de Graduação (0–1000)
+                    # Agora 100% responsiva
+                    # ----------------------------
+                    ft.Container(
+                        expand=True,
+                        width=float("inf"),
+                        content=graduacao_regua
+                    ),
 
-                # 2. Barra do Oponente
-                ft.Column(
-                    controls=[
-                        ft.Text(
-                            ref=self.nome_oponente_ref,  # Usa a Ref para atualização dinâmica
-                            value="Oponente",
-                            color="#180F4A",
-                            size=16,
-                            weight=ft.FontWeight.W_500
-                        ),
-                        barra_oponente,  # ft.ProgressBar passado como argumento
-                    ],
-                    expand=True
-                ),
-
-                # 3. Régua de Graduação
-                graduacao_regua,
-                ft.Container(height=15)
-            ]
+                    ft.Container(height=6)
+                ]
+            )
         )
 
     def atualizar_nomes(self, nome_oponente: str):
