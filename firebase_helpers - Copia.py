@@ -330,9 +330,7 @@ def descartar_carta(sala_ref, estado_jogo, carta):
     updates = {
         f"{caminho}.hand": mao_atual,
         "turn": proximo_turno,
-        # f"{caminho}.last_card_played": f'{carta["value"]} (descarte)'
-        f"{caminho}.last_card_played": f'{carta["value"]} <<descarte>>'
-
+        f"{caminho}.last_card_played": f'{carta["value"]} (descarte)'
     }
 
     sala_ref.update(updates)

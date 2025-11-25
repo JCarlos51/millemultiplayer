@@ -194,22 +194,9 @@ class AreaDeJogoDoJogador(ft.Column):
         self.limit_txt.current.value = "Ativo" if jogador_data.get("limite") else "Inativo"
         self.limit_txt.current.color = ft.Colors.AMBER_700 if jogador_data.get("limite") else ft.Colors.GREY_500
 
-        # --- Última carta jogada com formatação especial ---
-        texto = jogador_data.get("last_card_played", "Nenhuma")
-
-        if texto and "<<descarte>>" in texto:
-            valor = texto.replace(" <<descarte>>", "")
-            self.last_card_txt.current.value = ""  # Necessário para spans funcionarem
-            self.last_card_txt.current.spans = [
-                ft.TextSpan(valor, ft.TextStyle(color=ft.Colors.BLUE)),
-                ft.TextSpan(" (descarte)", ft.TextStyle(color=ft.Colors.GREY_500)),
-            ]
-        else:
-            self.last_card_txt.current.spans = []
-            self.last_card_txt.current.value = texto
-            self.last_card_txt.current.color = (
-                ft.Colors.BLUE if texto != "Nenhuma" else ft.Colors.GREY_500
-            )
+        self.last_card_txt.current.value = jogador_data.get("last_card_played", "Nenhuma")
+        self.last_card_txt.current.color = ft.Colors.BLUE if jogador_data.get(
+            "last_card_played") != "Nenhuma" else ft.Colors.GREY_500
 
         self.safeties_txt.current.value = ' | '.join(jogador_data.get("safeties", [])) or "Nenhuma"
         self.safeties_txt.current.color = ft.Colors.ORANGE if jogador_data.get("safeties") else ft.Colors.GREY_500
