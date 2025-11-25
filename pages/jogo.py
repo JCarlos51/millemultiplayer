@@ -501,6 +501,31 @@ def jogo_view(page: ft.Page):
 
             threading.Thread(target=liberar_bloqueio).start()
 
+    # 🔆 NOVO: função para atualizar o semáforo com base em status/limite (não mais no turno)
+    def atualizar_semaforo(area: AreaDeJogoDoJogador, jogador_data: dict):
+        """
+        Regras:
+        - Quando o status do jogador NÃO for 'Luz Verde' → vermelho
+        - Quando o status for 'Luz Verde' e limite=False → verde
+        - Quando o status for 'Luz Verde' e limite=True  → amarelo
+        """
+        status = jogador_data.get("status", "Luz Vermelha")
+        limite_50 = jogador_data.get("limite", False)
+
+        # Escolhe a imagem correta
+        if status != "Luz Verde":
+            img = "images/red_light.png"
+        else:
+            img = "images/yellow_light.png" if limite_50 else "images/green_light.png"
+
+        # Garante que o controle existe
+        if getattr(area, "traffic_light", None) and area.traffic_light.current:
+            area.traffic_light.current.src = img
+            try:
+                area.traffic_light.current.update()
+            except Exception:
+                pass
+
     def on_snapshot(doc_snapshot, changes, read_time):
         if not doc_snapshot:
             return
@@ -703,25 +728,15 @@ def jogo_view(page: ft.Page):
             if area_oponente:
                 area_oponente.atualizar_ui(oponente)
 
+            # 🔆 Semáforos — baseados SOMENTE no status + limite 50km
+            if area_jogador_local:
+                atualizar_semaforo(area_jogador_local, meu)
+            if area_oponente:
+                atualizar_semaforo(area_oponente, oponente)
+
             # Barras de progresso
             if callable(atualizar_barras):
                 atualizar_barras(meu.get("distance", 0), oponente.get("distance", 0))
-
-            # Semáforos
-            if is_my_turn:
-                if area_jogador_local and getattr(area_jogador_local, "traffic_light",
-                                                  None) and area_jogador_local.traffic_light.current:
-                    area_jogador_local.traffic_light.current.src = "images/green_light.png"
-                if area_oponente and getattr(area_oponente, "traffic_light",
-                                             None) and area_oponente.traffic_light.current:
-                    area_oponente.traffic_light.current.src = "images/red_light.png"
-            else:
-                if area_jogador_local and getattr(area_jogador_local, "traffic_light",
-                                                  None) and area_jogador_local.traffic_light.current:
-                    area_jogador_local.traffic_light.current.src = "images/red_light.png"
-                if area_oponente and getattr(area_oponente, "traffic_light",
-                                             None) and area_oponente.traffic_light.current:
-                    area_oponente.traffic_light.current.src = "images/green_light.png"
 
             # ---------------------------------------------------------
             # 12) PLACAR FINAL
