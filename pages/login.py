@@ -334,7 +334,7 @@ def login_view(page: ft.Page):
             login_card,
         ],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=20
+        spacing=14
     )
 
     img_headline = ft.Image(src="images/carro.png", width=300, height=200, fit=ft.ImageFit.CONTAIN)

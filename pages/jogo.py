@@ -748,7 +748,7 @@ def jogo_view(page: ft.Page):
             ):
                 if not data.get("placar_calculado", False):
                     try:
-                        print("🧮 Calculando placar final...")
+                        # print("🧮 Calculando placar final...")
 
                         deck_local = data.get("deck", [])
                         mao1 = jogador_1.get("hand", []) or []
@@ -763,7 +763,7 @@ def jogo_view(page: ft.Page):
                             calcular_e_enviar_placar_final(sala_ref, estado_jogo, reescrever_placar=False)
 
                         sala_ref.update({"placar_calculado": True})
-                        print("✅ Placar calculado e salvo no Firestore.")
+                        # print("✅ Placar calculado e salvo no Firestore.")
                         page.go("/placar")
                         return
                     except Exception as e:
@@ -777,7 +777,7 @@ def jogo_view(page: ft.Page):
                         import time
                         time.sleep(1)
                         try:
-                            print("➡️ Indo para o placar...")
+                            # print("➡️ Indo para o placar...")
                             page.go("/placar")
                         except Exception as e:
                             print(f"⚠️ Erro ao redirecionar: {e}")
@@ -840,7 +840,7 @@ def calcular_e_enviar_placar_final(sala_ref, estado_jogo, reescrever_placar: boo
 
     # Evita duplicatas, exceto quando queremos reescrever (fim de baralho)
     if meu.get("placar_registrado", False) and not reescrever_placar:
-        print("⚠️ Placar já foi registrado para este jogador. Ignorando duplicata.")
+        # print("⚠️ Placar já foi registrado para este jogador. Ignorando duplicata.")
         return
 
     deck_vazio = not sala_data.get("deck")
@@ -1009,7 +1009,7 @@ def finalizar_mao_por_fim_de_baralho(sala_ref):
     if deck or mao1 or mao2:
         return
 
-    print("🛑 Fim de baralho detectado — finalizando mão por falta de cartas.")
+    # print("🛑 Fim de baralho detectado — finalizando mão por falta de cartas.")
 
     dist1 = player1.get("distance", 0)
     dist2 = player2.get("distance", 0)

@@ -9,7 +9,7 @@ from pages.jogo import create_deck, distribuir_cartas
 
 
 def placar_view(page: ft.Page):
-    print("Placar View")
+    # print("Placar View")
     # 🧼 Força a limpeza de diálogos antigos (fallback defensivo)
     if hasattr(page, "dialog"):
         page.dialog = None
