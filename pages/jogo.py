@@ -426,8 +426,8 @@ def jogo_view(page: ft.Page):
 
     dialog_extensao = ft.AlertDialog(
         modal=True,
-        title=ft.Text("Extensão de 1000 km!"),
-        content=ft.Text("Você atingiu 700 km! Deseja estender sua corrida para 1000 km?"),
+        title=ft.Text("Extensão até 1000 km!"),
+        content=ft.Text("Você atingiu 700 km! Deseja estender sua corrida até 1000 km?"),
         actions=[
             ft.TextButton("Sim", on_click=aceitar_extensao),
             ft.TextButton("Não", on_click=recusar_extensao),

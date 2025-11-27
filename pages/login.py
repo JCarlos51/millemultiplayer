@@ -274,7 +274,7 @@ def login_view(page: ft.Page):
                 ),
                 ft.Text(
                     "Digite seu nome e o do seu oponente. "
-                    "A sala é criada automaticamente e o oponente entra sem número de sala.",
+                    "A sala é criada automaticamente e o oponente entrará nela",
                     size=12,
                     color="white",
                     text_align=ft.TextAlign.CENTER
