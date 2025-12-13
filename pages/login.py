@@ -39,15 +39,45 @@ def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
 def limpar_salas_antigas():
-    """Remove salas com mais de 1 dia de existência."""
-    limite = datetime.now(timezone.utc) - timedelta(days=1)
+    """
+    Remove salas:
+    - com mais de 5 horas de existência
+    - ou onde os nomes dos jogadores sejam iguais
+    """
+    agora = datetime.now(timezone.utc)
+    limite = agora - timedelta(hours=5)
+
     salas_ref = db.collection("salas")
+
     for doc in salas_ref.stream():
         data = doc.to_dict() or {}
+
+        # 🔹 Regra 1: sala antiga (> 5 horas)
         created_at = data.get("created_at")
-        if created_at and created_at < limite:
+        sala_antiga = created_at and created_at < limite
+
+        # 🔹 Regra 2: nomes iguais
+        p1_nome = normalizar_nome((data.get("player1") or {}).get("nome", ""))
+        p2_nome = normalizar_nome((data.get("player2") or {}).get("nome", ""))
+
+        p1_cf = data.get("player1_nome_cf", "")
+        oponente_cf = data.get("oponente_esperado", "")
+
+        nomes_iguais = (
+            p1_nome and p2_nome and p1_nome == p2_nome
+        ) or (
+            p1_cf and oponente_cf and p1_cf == oponente_cf
+        )
+
+        if sala_antiga or nomes_iguais:
             salas_ref.document(doc.id).delete()
-            print(f"🗑️ Sala {doc.id} removida (criada em {created_at})")
+            motivo = []
+            if sala_antiga:
+                motivo.append("antiga (>5h)")
+            if nomes_iguais:
+                motivo.append("nomes iguais")
+
+            print(f"🗑️ Sala {doc.id} removida ({', '.join(motivo)})")
 
 # ---------------------------------------------------
 # 🔍 Busca sala compatível (em ambas as ordens)

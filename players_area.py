@@ -1,7 +1,5 @@
 # players_area.py
-
 import flet as ft
-
 
 # A classe agora herda diretamente de ft.Column, evitando o erro do UserControl.
 class AreaDeJogoDoJogador(ft.Column):
